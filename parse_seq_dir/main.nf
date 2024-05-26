@@ -1,7 +1,15 @@
 
 /*
 
-Parse sequence directory 
+Parse sequence directory.
+
+A subworkflow without process.
+It takes directory as input
+
+It gives list of sequences files with sample name as output:
+paired: [sample_name [file R1, file R2]]
+single: [sample_name [file R1]]
+spring: [sample_name [file spring]]
 
 */
 
@@ -23,7 +31,7 @@ workflow PARSE_SEQ_DIR {
       def name = file.getName()
       def parent = file.getParent()
       layout = "PE"
-      if ((match = name =~ /^(\S+?)([\._][Rr]?[12](.*))?(\.fastq|\.fq)(\.gz)?$/)) {
+      if ((match = name =~ /(?i)^(.+?)([\._]r?[12](.*?))?(\.fastq|\.fq)(\.)?(gz|gzip|z|zip|xz|bzip2|b2|bz2)?$/)) {
         def sampleName = match.group(1)
         def readIndicator = match.group(2)
         def laneIndicator = match.group(3)
@@ -49,6 +57,9 @@ workflow PARSE_SEQ_DIR {
           sampleName = sampleName + laneIndicator
         }
         files.add(tuple(layout, [sampleName, file]))
+      } else if ((match = name =~ /(?i)^(.+?)\.spring$/)) {
+        def sampleName = match.group(1)
+        files.add(tuple("spring", [sampleName, file]))
       }
     }
     return files
@@ -58,15 +69,22 @@ workflow PARSE_SEQ_DIR {
       return it[1]
     paired: it[0] == "PE"
       return it[1]
+    spring: it[0] == "spring"
+      return it[1]
   }
   | set {allFiles}
 
   allFiles.paired
   | groupTuple(by: 0)
+  | map { it ->
+      def sorted = it[1].sort { a, b -> a.name <=> b.name }
+      return tuple(it[0], sorted)
+  }
   | set {pairedFiles}
 
   emit:
     single = allFiles.single
     paired = pairedFiles
+    spring = allFiles.spring
 
 }
