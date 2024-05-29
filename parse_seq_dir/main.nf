@@ -1,7 +1,12 @@
-
 /*
 
 Parse sequence directory.
+
+The Inputdir can be either 
+(directory)
+OR
+(directory, sample names) in that case only reads matching sample names are
+  treated
 
 A subworkflow without process.
 It takes directory as input
@@ -21,13 +26,26 @@ workflow PARSE_SEQ_DIR {
 
   inputDir.flatMap {
     def files = []
+    def list2return = []
     def names = []
+    def samplesToKeep = []
     // iterate through it.listFiles()
-    it.listFiles().each { file ->
-      names.add(file.getName())
+    if (it instanceof Path) {
+      it.listFiles().each { file ->
+        names.add(file.getName())
+        files.add(file)
+      }
+    } else {
+      it[0].listFiles().each { file ->
+        names.add(file.getName())
+        files.add(file)
+      }
+      samplesToKeep = it[1]
     }
+    
+
     def layout = ""
-    it.listFiles().each { file ->
+    files.each { file ->
       def name = file.getName()
       def parent = file.getParent()
       layout = "SE"
@@ -72,21 +90,25 @@ workflow PARSE_SEQ_DIR {
         } else {
           sampleName = seSampleName
         }
-        files.add(tuple(layout, [sampleName, file]))
+        if (samplesToKeep.size() == 0 || samplesToKeep.contains(sampleName)) {
+          list2return.add(tuple(layout, [sampleName, file]))
+        }
       } else if ((match = name =~ /(?i)^(.+?)\.spring$/)) {
         def sampleName = match.group(1)
-        files.add(tuple("spring", [sampleName, file]))
+        if (samplesToKeep.size() == 0 || samplesToKeep.contains(sampleName)) {
+          list2return.add(tuple("spring", [sampleName, file]))
+        }
       }
     }
-    return files
+    return list2return
   }
   | branch {
     single: it[0] == "SE"
-      return it[1]
+      return tuple(it[1][0], [it[1][1]])
     paired: it[0] == "PE"
       return it[1]
     spring: it[0] == "spring"
-      return it[1]
+      return tuple(it[1][0], [it[1][1]])
   }
   | set {allFiles}
 
@@ -98,9 +120,10 @@ workflow PARSE_SEQ_DIR {
   }
   | set {pairedFiles}
 
+  fastqFiles = pairedFiles.concat(allFiles.single)
+
   emit:
-    single = allFiles.single
-    paired = pairedFiles
+    fastq = fastqFiles
     spring = allFiles.spring
 
 }
