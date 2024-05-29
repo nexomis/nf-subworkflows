@@ -1,0 +1,33 @@
+module_order:
+  - fastqc:
+      name: 'FastQC (Trimmed)'
+      anchor: "fastqc_trimmed"
+      info: "This section of the report shows FastQC results after adapter trimming."
+      target: ""
+      path_filters:
+        - 'trimmed/*.zip'
+  - fastqc:
+      name: 'FastQC (Raw)'
+      anchor: "fastqc_raw"
+      path_filters:
+        - 'raw/*.zip'
+report_section_order:
+  fastqc_trimmed:
+    before: fastqc_raw
+skip_versions_section: true
+table_columns_name:
+  FastQC (Raw):
+    percent_duplicates: "% Dup (Raw)"
+    percent_gc: "% GC (Raw)"
+    avg_sequence_length: "Avg Length (Raw)"  
+    median_sequence_length: "Med Length (Raw)" 
+    percent_fails: "% Fails (Raw)" 
+    total_sequences: "# Seqs (Raw)"
+  FastQC (Trimmed):
+    percent_duplicates: "% Dup (Trimmed)"
+    percent_gc: "% GC (Trimmed)"
+    avg_sequence_length: "Avg Length (Trimmed)"  
+    median_sequence_length: "Med Length (Trimmed)"
+    percent_fails: "% Fails (Trimmed)"
+    total_sequences: "# Seqs (Trimmed)"
+
