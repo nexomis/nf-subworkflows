@@ -41,7 +41,6 @@ include { PARSE_SEQ_DIR_UNSPRING } from '../parse_seq_dir_unspring/main.nf'
 workflow PRIMARY {
     take: 
     inputDir
-    fastpArgs
 
     main:
 
@@ -49,7 +48,6 @@ workflow PRIMARY {
 
     trimmedReads = FASTP(
       reads,
-      fastpArgs
     )
 
     FASTQC_RAW(reads)
@@ -79,3 +77,5 @@ workflow PRIMARY {
     trimmed = trimmedReads
 
 }
+
+
