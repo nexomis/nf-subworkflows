@@ -1,5 +1,6 @@
 // process include
 include { FASTP } from '../../process/fastp/main.nf'
+include { KRAKEN2 } from '../../process/kraken2/main.nf'
 
 include { FASTQC as FASTQC_RAW; FASTQC as FASTQC_TRIMMED } from '../../process/fastqc/main.nf'
 
@@ -12,6 +13,7 @@ process PRIMARY_MULTIQC {
   input:
   path raw_zips, stageAs: 'raw/*', arity: '1..*'
   path trimmed_zips, stageAs: 'trimmed/*', arity: '1..*'
+  path kraken2_reports, arity: '1..*'
   path conf_yml, arity: 1, stageAs: "multiqc_config.yaml"
 
   output:
@@ -41,13 +43,14 @@ include { PARSE_SEQ_DIR_UNSPRING } from '../parse_seq_dir_unspring/main.nf'
 workflow PRIMARY {
     take: 
     inputDir
+    dbPathKraken2
 
     main:
 
     reads = PARSE_SEQ_DIR_UNSPRING(inputDir)
 
     trimmedReads = FASTP(
-      reads,
+      reads
     )
 
     FASTQC_RAW(reads)
@@ -67,9 +70,22 @@ workflow PRIMARY {
     | collect
     | set {fastqcTrimmed}
 
+    view(trimmedReads)
+
+    KRAKEN2(
+      trimmedReads,
+      dbPathKraken2
+    )
+
+    KRAKEN2.out.report
+    | map {it[1]}
+    | collect
+    | set {kraken2Reports}
+
     PRIMARY_MULTIQC(
       fastqcRaw,
       fastqcTrimmed,
+      kraken2Reports,
       multiqcYml
     )
 

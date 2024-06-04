@@ -11,6 +11,12 @@ module_order:
       anchor: "fastqc_raw"
       path_filters:
         - 'raw/*.zip'
+  - kraken:
+      name: 'Kraken'
+      anchor: "kraken"
+      info: "This section of the report shows Kraken results."
+      path_filters:
+        - '*.report.txt'
 report_section_order:
   fastqc_trimmed:
     before: fastqc_raw
