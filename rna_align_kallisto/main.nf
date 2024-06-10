@@ -8,8 +8,8 @@ include { PARSE_SEQ_DIR_UNSPRING } from '../parse_seq_dir_unspring/main.nf'
 workflow RNA_ALIGN_KALLISTO {
     take: 
     inputDir
-    kallistoIdx
-    readsOrientation
+    idx
+    main_settings
 
 
     main:
@@ -18,8 +18,8 @@ workflow RNA_ALIGN_KALLISTO {
 
     KALLISTO_QUANT(
       reads,
-      kallistoIdx,
-      readsOrientation
+      idx,
+      main_settings
     )
 }
 
