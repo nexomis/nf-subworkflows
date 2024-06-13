@@ -1,4 +1,10 @@
 module_order:
+  - fastp:
+      name: 'Trimming (Fastp)'
+      anchor: "fastp"
+      info: "This section of the report shows trimming results using fastp."
+      path_filters:
+        - '*.json'
   - fastqc:
       name: 'FastQC (Trimmed)'
       anchor: "fastqc_trimmed"
@@ -20,6 +26,10 @@ module_order:
 report_section_order:
   fastqc_trimmed:
     before: fastqc_raw
+use_filename_as_sample_name:
+  - kraken
+  - fastp
+  - fastqc
 skip_versions_section: true
 table_columns_name:
   FastQC (Raw):

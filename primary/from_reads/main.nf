@@ -1,6 +1,7 @@
 // process include
 include { FASTP } from '../../../process/fastp/main.nf'
 include { KRAKEN2 } from '../../../process/kraken2/main.nf'
+include { SEQTK_SAMPLE as SEQTK_SAMPLE_RAW; SEQTK_SAMPLE as SEQTK_SAMPLE_TRIMMED } from '../../../process/seqtk/sample/main.nf'
 include { SPRING_DECOMPRESS } from '../../../process/spring/decompress/main.nf'
 include { FASTQC as FASTQC_RAW; FASTQC as FASTQC_TRIMMED } from '../../../process/fastqc/main.nf'
 
@@ -14,6 +15,7 @@ process PRIMARY_MULTIQC {
   path raw_zips, stageAs: 'raw/*', arity: '1..*'
   path trimmed_zips, stageAs: 'trimmed/*', arity: '1..*'
   path kraken2_reports, arity: '1..*'
+  path fastp_reports, arity: '1..*'
   path conf_yml, arity: 1, stageAs: "multiqc_config.yaml"
 
   output:
@@ -23,7 +25,7 @@ process PRIMARY_MULTIQC {
   """
   #!/usr/bin/bash
 
-  multiqc -c $conf_yml --no-data-dir -n primary_multiqc.html .
+  multiqc -c $conf_yml --exclude general_stats --no-data-dir -n primary_multiqc.html .
 
   """
 
@@ -69,13 +71,18 @@ workflow PRIMARY_FROM_READS {
   | set { inputFastq }
 
 
-  trimmedReads = FASTP(
-    inputFastq
-  )
+  FASTP(inputFastq)
 
-  FASTQC_RAW(inputFastq)
+  trimmedReads = FASTP.out.reads
 
-  FASTQC_TRIMMED(trimmedReads)
+  SEQTK_SAMPLE_RAW(inputFastq)
+  | set {subInputFastq}
+  SEQTK_SAMPLE_TRIMMED(trimmedReads)
+  | set {subTrimmedReads}
+
+  FASTQC_RAW(subInputFastq)
+
+  FASTQC_TRIMMED(subTrimmedReads)
 
   Channel.fromPath(moduleDir + "/../multiqc.yml")
   | set {multiqcYml}
@@ -90,8 +97,13 @@ workflow PRIMARY_FROM_READS {
   | collect
   | set {fastqcTrimmed}
 
+  FASTP.out.report  
+  | map {it[1]}
+  | collect
+  | set {fastpReports}
+
   KRAKEN2(
-    trimmedReads,
+    subTrimmedReads,
     dbPathKraken2
   )
 
@@ -104,6 +116,7 @@ workflow PRIMARY_FROM_READS {
     fastqcRaw,
     fastqcTrimmed,
     kraken2Reports,
+    fastpReports,
     multiqcYml
   )
 
