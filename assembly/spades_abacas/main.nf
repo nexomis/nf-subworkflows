@@ -13,26 +13,13 @@ workflow SPADES_ABACAS {
   // run spades
   spadesOut = SPADES(ch_cleanedReads)
 
-  // parse spades channels to abacas input : meta + scaffold_path
-  spadesScaffolds = spadesOut[0].flatMap { tuple ->
-    def (meta, output_dir) = tuple
-    def spades_scaffolds_path = file("${output_dir}/${meta.id}.scaffolds.fa")
-    return [[meta, spades_scaffolds_path]]
-  }
-  
   // run abacas
+  ch_spadesScaffolds = spadesOut.out.scaffolds
   ref_genome = ch_cleanedReads.map { it[0].ref_genome }
-  abacasOut = ABACAS(spadesScaffolds, ref_genome, abacas_MUMmer_program, abacas_keep_on_output)
-
-  //  parse abacas channels : meta + scaffold_path
-  abacasScaffold = abacasOut[0].flatMap { tuple ->
-    def (meta, output_dir) = tuple
-    def abacas_scaffolds_path = file("${output_dir}/${meta.id}.fasta")
-    return [[meta, abacas_scaffolds_path]]
-  }
+  abacasOut = ABACAS(ch_spadesScaffolds, ref_genome, abacas_MUMmer_program, abacas_keep_on_output)
 
   emit:
-  abacasScaffold
+  abacasOut.out.scaffold
 }
 
 
