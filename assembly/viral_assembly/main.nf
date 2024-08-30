@@ -7,16 +7,36 @@ include { QUAST } from '../../../process/quast/main.nf'
 include { SPADES } from '../../../process/spades/main.nf'
 include { ABACAS } from '../../../process/abacas/main.nf'
 
+process EMPTY_FILE {
+  container "ubuntu:jammy"
+
+  label 'cpu_low'
+  label 'mem_low'
+
+  output:
+  path "EMPTY_FILE"
+
+  script:
+  """
+  touch EMPTY_FILE
+  """
+
+  stub:
+  """
+  touch EMPTY_FILE
+  """
+}
 
 workflow VIRAL_ASSEMBLY {
   // TODO: if usefull manage compression (.gz) of intermediate and final fasta ?
 
   take:
-  inputReads
-  inputK2Index
-  inputRefGenome
+  inputs // (meta, reads, k2_index, inputRefgenome)
 
   main:
+  inputReads = inputs.map { [it[0], it[1]] }
+  inputK2Index = inputs.map { [it[0], it[2]] }
+  inputRefGenome = inputs.map { [it[0], it[3]] }
 
   inputReads
   | toSortedList {it[0].id}
@@ -31,7 +51,6 @@ workflow VIRAL_ASSEMBLY {
       no_filter: true
   }
   | set { inputForK2 }
-
   
   inputK2Index
   | filter { it[0].host_removal == "yes" }
@@ -83,7 +102,6 @@ workflow VIRAL_ASSEMBLY {
   | flatMap
   | set {finalScaffolds}
 
-
   // mapping (with index building and bam sorting)
 
   finalScaffolds
@@ -104,12 +122,6 @@ workflow VIRAL_ASSEMBLY {
   | map { it[1] }
   | set { bwtIdx }
 
-  bwtIdx
-  | view
-
-  readsForBowtie2
-  | view
-
   BOWTIE2(readsForBowtie2, bwtIdx)
 
   rawSAM=BOWTIE2.out.sam
@@ -118,13 +130,43 @@ workflow VIRAL_ASSEMBLY {
   | toSortedList {it[0].id}
   | flatMap
   | set { sortedBAM }
+
+  emptyFile = EMPTY_FILE()
+
+  sortedBAM
+  | map { [it[0].id, it[1], it[2]] }
+  | set { bamForQuast }
+
+  inputRefGenome
+  | map { [it[0].id, it[1]] }
+  | set { refForQuast }
+
+  finalScaffolds
+  | map { [it[0].id, it[0], it[1]] }
+  | join(refForQuast, by: 0, remainder: true)
+  | combine(emptyFile)
+  | map {
+    if (it[3]) {
+      return [it[0], it[1], it[2], it[3]]
+    } else {
+      return [it[0], it[1], it[2], it[4]]
+    }
+  }
+  | join(bamForQuast, by: 0, remainder: true)
+  | combine(emptyFile)
+  | map {
+      if (it[4]) {
+        return [it[1], it[2], it[3], it[4], it[5]]
+      } else {
+        return [it[1], it[2], it[3], it[5], it[5]]
+      }
+    }
+| set {inputforQuast}
   
-  // QUAST(scaffoldsAssembled, sortedBAM, inputRefGenome)
-  // QUAST(scaffoldsAssembled, sortedBAM, inputRefGenome)
-  // QUAST(scaffoldsAssembled, null, null)
+  QUAST(inputforQuast)
 
   emit:
   scaffolds = finalScaffolds
   alignments = sortedBAM
-  
+
 }
