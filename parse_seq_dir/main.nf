@@ -104,11 +104,11 @@ workflow PARSE_SEQ_DIR {
   }
   | branch {
     single: it[0] == "SE"
-      return tuple(it[1][0], [it[1][1]])
+      return tuple(["id":it[1][0], "read_type": "SE"], [it[1][1]])
     paired: it[0] == "PE"
       return it[1]
     spring: it[0] == "spring"
-      return tuple(it[1][0], [it[1][1]])
+      return tuple(["id":it[1][0], "read_type": "spring"], [it[1][1]])
   }
   | set {allFiles}
 
@@ -116,7 +116,7 @@ workflow PARSE_SEQ_DIR {
   | groupTuple(by: 0)
   | map { it ->
       def sorted = it[1].sort { a, b -> a.name <=> b.name }
-      return tuple(it[0], sorted)
+      return tuple(["id":it[0], "read_type": "PE"], sorted)
   }
   | set {pairedFiles}
 
