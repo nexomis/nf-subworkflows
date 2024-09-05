@@ -39,11 +39,6 @@ process PRIMARY_MULTIQC {
 
 }
 
-
-
-// workflow include
-include { PARSE_SEQ_DIR_UNSPRING } from '../../parse_seq_dir_unspring/main.nf'
-
 workflow PRIMARY_FROM_READS {
   take: 
   inputReads
