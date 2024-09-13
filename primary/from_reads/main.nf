@@ -43,6 +43,7 @@ workflow PRIMARY_FROM_READS {
   take: 
   inputReads
   dbPathKraken2
+  numReads
 
   main:
 
@@ -70,9 +71,9 @@ workflow PRIMARY_FROM_READS {
 
   trimmedReads = FASTP.out.reads
 
-  SEQTK_SAMPLE_RAW(inputFastq)
+  SEQTK_SAMPLE_RAW(inputFastq, numReads)
   | set {subInputFastq}
-  SEQTK_SAMPLE_TRIMMED(trimmedReads)
+  SEQTK_SAMPLE_TRIMMED(trimmedReads, numReads)
   | set {subTrimmedReads}
 
   FASTQC_RAW(subInputFastq)
@@ -86,7 +87,7 @@ workflow PRIMARY_FROM_READS {
   | map {it[1]}
   | collect
   | set {fastqcRaw}
-    
+
   FASTQC_TRIMMED.out.zip
   | map {it[1]}
   | collect
@@ -115,9 +116,10 @@ workflow PRIMARY_FROM_READS {
     multiqcYml
   )
 
-  emit: 
+  emit:
   trimmed = trimmedReads
+  fastqc_trim_html = FASTQC_TRIMMED.out.html
+  fastqc_raw_html = FASTQC_RAW.out.html
+  multiqc_html = PRIMARY_MULTIQC.out
 
 }
-
-
