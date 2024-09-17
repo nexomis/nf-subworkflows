@@ -23,7 +23,9 @@ workflow VIRAL_ASSEMBLY {
   def expectedMeta = [
       "ref_id": ["String", "NullObject"],
       "class_db_ids": ["String[]", "ArrayList"],
-      "class_tool": ["String"]
+      "class_tool": ["String"],
+      "realign": ["String"],
+      "do_abacas": ["String"]
   ]
 
   // Validate metadata
@@ -70,6 +72,7 @@ workflow VIRAL_ASSEMBLY {
   | set { scaffolds }
 
   scaffolds
+  | filter { it[0].do_abacas == "yes" }
   | map {[it[0].ref_id, it]}
   | filter { it[0] }
   | combine(faRefGenome.map {[it[0].id, it]}, by:0)
