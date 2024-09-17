@@ -1,14 +1,14 @@
 // include - process
-include { KRAKEN2 as KRAKEN2_HOST1; KRAKEN2 as KRAKEN2_HOST2; KRAKEN2 as KRAKEN2_HOST3 } from '../../process/kraken2/main.nf'
-include { GZ as GZ1; GZ as GZ2; GZ as GZ3 } from '../../process/gz/main.nf'
 include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
 include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
 include { QUAST } from '../../process/quast/main.nf'
+include { GUNZIP } from '../../process/gunzip/main.nf'
 include { SPADES } from '../../process/spades/main.nf'
 include { ABACAS } from '../../process/abacas/main.nf'
 include { EMPTY_FILE } from '../../process/empty_file/main.nf'
-include { SPRING_DECOMPRESS } from '../../process/spring/decompress/main.nf'
+include { UNSPRING_READS } from '../unspring_reads/main.nf'
+include { ITERATIVE_UNCLASSIFIED_READS_EXTRACTION } from '../iterative_unclassified_reads_extraction/main.nf'
 include { checkMeta } from '../utils.nf'
 
 workflow VIRAL_ASSEMBLY {
@@ -22,7 +22,8 @@ workflow VIRAL_ASSEMBLY {
 
   def expectedMeta = [
       "ref_id": ["String", "NullObject"],
-      "k2_ids": ["String[]", "ArrayList"]
+      "class_db_ids": ["String[]", "ArrayList"],
+      "class_tool": ["String"]
   ]
 
   // Validate metadata
@@ -30,58 +31,20 @@ workflow VIRAL_ASSEMBLY {
   inputK2Index.map { checkMeta(it) }
   inputRefGenome.map { checkMeta(it) }
 
-  inputReads
-  | branch {
-    spring: it[0].read_type == "spring"
-    fastq: true
+  sepRefGenome = inputRefGenome.branch {
+    gzip: ["gz","gzip","z"].contains(it[1].getExtension().toLowerCase())
+    other: true
   }
-  | set {reads}
 
-  reads.spring  
-  | SPRING_DECOMPRESS
-  | set {unspringReads}
+  GUNZIP(sepRefGenome.gzip)
+  | concat(sepRefGenome.other)
+  | set {faRefGenome}
 
-  reads.fastq
-  | concat(unspringReads)
-  | set {allFastq}
+  allFastq = UNSPRING_READS(inputReads)
 
-  allFastq.map { [it[0].k2_ids.size() >= 1 ? it[0].k2_ids[0] : "", it] }
-  | filter { it[0] != "" }
-  | combine(inputK2Index.map{[it[0].id, it]}, by:0)
-  | set {joinInputForK2i1}
+  inputReadsUnclassified = ITERATIVE_UNCLASSIFIED_READS_EXTRACTION(allFastq, inputK2Index)
 
-  KRAKEN2_HOST1(joinInputForK2i1.map { it[1] }, joinInputForK2i1.map { it[2] })
-  KRAKEN2_HOST1.out.unclassified_reads_fastq
-  | GZ1
-  | concat(inputReads)
-  | unique { it[0].id }
-  | set {inputReadsFromK1}
-
-  inputReadsFromK1.map { [it[0].k2_ids.size() >= 2 ? it[0].k2_ids[1] : "", it] }
-  | filter { it[0] != "" }
-  | combine(inputK2Index.map{[it[0].id, it]}, by:0)
-  | set {joinInputForK2i2}
-
-  KRAKEN2_HOST2(joinInputForK2i2.map { it[1] }, joinInputForK2i2.map { it[2] })
-  KRAKEN2_HOST2.out.unclassified_reads_fastq
-  | GZ2
-  | concat(inputReadsFromK1)
-  | unique { it[0].id }
-  | set {inputReadsFromK2}
-
-  inputReadsFromK2.map { [it[0].k2_ids.size() >= 3 ? it[0].k2_ids[2] : "", it] }
-  | filter { it[0] != "" }
-  | combine(inputK2Index.map{[it[0].id, it]}, by:0)
-  | set {joinInputForK2i3}
-
-  KRAKEN2_HOST3(joinInputForK2i3.map { it[1] }, joinInputForK2i3.map { it[2] })
-  KRAKEN2_HOST3.out.unclassified_reads_fastq
-  | GZ3
-  | concat(inputReadsFromK2)
-  | unique { it[0].id }
-  | set {inputReadsFromK3}
-
-  inputReadsFromK3 
+  inputReadsUnclassified 
   | flatMap { item ->
     def meta = item[0]
     def files = item[1]
@@ -109,7 +72,7 @@ workflow VIRAL_ASSEMBLY {
   scaffolds
   | map {[it[0].ref_id, it]}
   | filter { it[0] }
-  | combine(inputRefGenome.map {[it[0].id, it]}, by:0)
+  | combine(faRefGenome.map {[it[0].id, it]}, by:0)
   | set { joinInputForAbacas }
 
   // TODO SELECT BIGGER SCAFFOLD FOR NO_ABACAS ?? What about multi segment ?
@@ -130,7 +93,7 @@ workflow VIRAL_ASSEMBLY {
   BOWTIE2_BUILD.out.idx
   | set { bwtIdx }
 
-  inputReadsFromK3.map {[it[0].id, it]}
+  inputReadsUnclassified.map {[it[0].id, it]}
   | combine(bwtIdx.map {[it[0].id, it]}, by:0)
   | map {[[it[2][0], it[1][1]], it[2]]}
   | set {joinInputforBt2}
@@ -145,7 +108,7 @@ workflow VIRAL_ASSEMBLY {
   emptyFile = EMPTY_FILE()
   //finalScaffolds.filter{it[0].realign != "yes"}
 
-  refWithEmpty = inputRefGenome.concat(emptyFile).map {[it[0].id, it]}
+  refWithEmpty = faRefGenome.concat(emptyFile).map {[it[0].id, it]}
   bamWithEmpty = sortedBAM
   | map {["${it[0].id}:${it[0].assembler}", it]}
   | concat(emptyFile.map {[it[0].id, [it[0], it[1], it[1]]]})
