@@ -25,7 +25,8 @@ workflow VIRAL_ASSEMBLY {
       "class_db_ids": ["String[]", "ArrayList"],
       "class_tool": ["String"],
       "realign": ["String"],
-      "do_abacas": ["String"]
+      "do_abacas": ["String"],
+      "keep_before_abacas": ["String"]
   ]
 
   // Validate metadata
@@ -58,11 +59,10 @@ workflow VIRAL_ASSEMBLY {
     }
   }
   | branch {
-      spades: it[0].assembler.split(/:/)[0] == "spades"
-        it[0].args_spades = "--" + it[0].assembler.split(/:/)[1]
+      spades: (it[0].assembler.startsWith("spades_"))
+        it[0].args_spades = "${it[0].assembler}".replace("spades_", "--")
         return it
       no_assembly: true
-        return it
     }
   | set { inputForAssembly }
 
@@ -81,10 +81,34 @@ workflow VIRAL_ASSEMBLY {
   // TODO SELECT BIGGER SCAFFOLD FOR NO_ABACAS ?? What about multi segment ?
 
   ABACAS(joinInputForAbacas.map {it[1]}, joinInputForAbacas.map {it[2]})
-  ABACAS.out
-  | concat(scaffolds)
-  | unique { it[0].id + it[0].assembler }
+
+  ABACAS.out // process to extract the number of 
+  | map {
+    if (it[0].keep_before_abacas == "yes") {
+      it[0].assembler_with_abacas = "${it[0].assembler}_abacas"
+    }
+    def char_count = 0
+    def make_it_null = true
+    for (line in it[1].readLines()) {
+      if (!line.startsWith(">")) {
+        char_count += line.trim().length()
+        if (char_count > 500) {
+          make_it_null = false
+          break
+        }
+
+      }
+    }
+    if (make_it_null) {
+      it[1] = null
+    }
+    return it
+  }
+  | filter { it[1] }
+  | concat(scaffolds.map{ it[0].assembler_with_abacas = "${it[0].assembler}" ; return it})
+  | unique { it[0].id + it[0].assembler_with_abacas }
   | set {finalScaffolds}
+
 
   // mapping (with index building and bam sorting)
 
@@ -113,7 +137,7 @@ workflow VIRAL_ASSEMBLY {
 
   refWithEmpty = faRefGenome.concat(emptyFile).map {[it[0].id, it]}
   bamWithEmpty = sortedBAM
-  | map {["${it[0].id}:${it[0].assembler}", it]}
+  | map {["${it[0].id}:${it[0].assembler_with_abacas}", it]}
   | concat(emptyFile.map {[it[0].id, [it[0], it[1], it[1]]]})
 
   finalScaffolds
@@ -121,7 +145,7 @@ workflow VIRAL_ASSEMBLY {
   | combine(refWithEmpty, by:0)
   | map {
     if (it[1][0].realign == "yes") {
-      return ["${it[1][0].id}:${it[1][0].assembler}", it[1], it[2]]
+      return ["${it[1][0].id}:${it[1][0].assembler_with_abacas}", it[1], it[2]]
     } else {
       return ["empty_file", it[1], it[2]]
     }
@@ -135,7 +159,7 @@ workflow VIRAL_ASSEMBLY {
     def bams = []
     def bais = []
     it[1].each{ item ->
-      ids << item[0].id + "_" + item[0].assembler
+      ids << item[0].id + "_" + item[0].assembler_with_abacas
       assemblies << item[1]
     }
     it[3].each{ item ->
@@ -154,10 +178,12 @@ workflow VIRAL_ASSEMBLY {
   QUAST(inputForQuast.map{it[0]},inputForQuast.map{it[1]},inputForQuast.map{it[2]})
 
   emit:
-  all_aln         = sortedBAM
-  all_scaffolds   = finalScaffolds
-  quast_dir       = QUAST.out.dir
-  quast_html      = QUAST.out.html
-  quast_tsv       = QUAST.out.tsv
+  all_aln               = sortedBAM
+  all_scaffolds         = finalScaffolds
+  pre_abacas_scaffolds  = scaffolds
+  post_abacas_scaffolds = ABACAS.out
+  quast_dir             = QUAST.out.dir
+  quast_html            = QUAST.out.html
+  quast_tsv             = QUAST.out.tsv
 
 }
