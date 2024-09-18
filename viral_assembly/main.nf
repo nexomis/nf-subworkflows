@@ -11,6 +11,19 @@ include { UNSPRING_READS } from '../unspring_reads/main.nf'
 include { ITERATIVE_UNCLASSIFIED_READS_EXTRACTION } from '../iterative_unclassified_reads_extraction/main.nf'
 include { checkMeta } from '../utils.nf'
 
+def nullifyEmptyFasta(fasta_file){
+  def char_count = 0
+  for (line in fasta_file.readLines()) {
+    if (!line.startsWith(">")) {
+      char_count += line.trim().length()
+      if (char_count > 500) {
+        return fasta_file
+      }
+    }
+  }
+  return null
+}
+
 workflow VIRAL_ASSEMBLY {
 
   take:
@@ -53,16 +66,17 @@ workflow VIRAL_ASSEMBLY {
     def files = item[1]
     def assemblerList = meta.assembler
     assemblerList.collect { assemblerValue ->
-        def newMeta = meta.clone()
-        newMeta.assembler = assemblerValue
-        [newMeta, files]
+        def new_meta = meta.clone()
+        new_meta.assembler = assemblerValue
+        [new_meta, files]
     }
   }
   | branch {
       spades: (it[0].assembler.startsWith("spades_"))
-        it[0].args_spades = "${it[0].assembler}".replace("spades_", "--")
-        it[0].label = "${it[0].id}_${it[0].assembler}"
-        return it
+        def new_meta = it[0].clone()
+        new_meta.args_spades = "${new_meta.assembler}".replace("spades_", "--")
+        new_meta.label = "${new_meta.id}_${new_meta.assembler}"
+        return [new_meta, it[1]]
       no_assembly: true
     }
   | set { inputForAssembly }
@@ -70,6 +84,11 @@ workflow VIRAL_ASSEMBLY {
   SPADES(inputForAssembly.spades)
 
   SPADES.out.scaffolds
+  | map {
+    def new_file = nullifyEmptyFasta(it[1])
+    return [it[0], new_file]  
+  }
+  | filter { it[1] }
   | set { scaffolds }
 
   scaffolds
@@ -78,8 +97,9 @@ workflow VIRAL_ASSEMBLY {
   | filter { it[0] }
   | combine(faRefGenome.map {[it[0].id, it]}, by:0)
   | map {
-      it[1][0].label = "${it[1][0].id}_${it[1][0].assembler}_abacas"
-      return it
+      def new_meta = it[1][0].clone()
+      new_meta.label = "${new_meta.id}_${new_meta.assembler}_abacas"
+      return [it[0], [new_meta, it[1][1]], it[2]]
   }
   | set { joinInputForAbacas }
 
@@ -89,28 +109,20 @@ workflow VIRAL_ASSEMBLY {
 
   ABACAS.out // process to extract the number of 
   | map {
-    if (it[0].keep_before_abacas == "yes") {
-      it[0].assembler_with_abacas = "${it[0].assembler}_abacas"
+    def new_meta = it[0]
+    if (new_meta.keep_before_abacas == "yes") {
+      new_meta.assembler_with_abacas = "${new_meta.assembler}_abacas"
     }
-    def char_count = 0
-    def make_it_null = true
-    for (line in it[1].readLines()) {
-      if (!line.startsWith(">")) {
-        char_count += line.trim().length()
-        if (char_count > 500) {
-          make_it_null = false
-          break
-        }
-
-      }
-    }
-    if (make_it_null) {
-      it[1] = null
-    }
-    return it
+    def new_file = nullifyEmptyFasta(it[1])
+    return [new_meta, new_file]
   }
   | filter { it[1] }
-  | concat(scaffolds.map{ it[0].assembler_with_abacas = "${it[0].assembler}" ; return it})
+  | concat(scaffolds.map{ 
+      def new_meta = it[0].clone()
+      new_meta.assembler_with_abacas = "${new_meta.assembler}"
+      return [new_meta, it[1]]
+    }
+  )
   | unique { it[0].id + it[0].assembler_with_abacas }
   | set {finalScaffolds}
 
@@ -129,8 +141,9 @@ workflow VIRAL_ASSEMBLY {
   | combine(bwtIdx.map {[it[0].id, it]}, by:0)
   | map {[[it[2][0], it[1][1]], it[2]]}
   | map {
-      it[0][0].label = "${it[0][0].id}_${it[0][0].assembler_with_abacas}"
-      return it
+      def new_meta = it[0][0]
+      new_meta.label = "${new_meta.id}_${new_meta.assembler_with_abacas}"
+      return [[new_meta, it[0][1]], it[1]]
   }
   | set {joinInputforBt2}
 
