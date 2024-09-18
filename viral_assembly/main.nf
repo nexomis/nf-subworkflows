@@ -61,6 +61,7 @@ workflow VIRAL_ASSEMBLY {
   | branch {
       spades: (it[0].assembler.startsWith("spades_"))
         it[0].args_spades = "${it[0].assembler}".replace("spades_", "--")
+        it[0].label = "${it[0].id}_${it[0].assembler}"
         return it
       no_assembly: true
     }
@@ -76,6 +77,10 @@ workflow VIRAL_ASSEMBLY {
   | map {[it[0].ref_id, it]}
   | filter { it[0] }
   | combine(faRefGenome.map {[it[0].id, it]}, by:0)
+  | map {
+      it[1][0].label = "${it[1][0].id}_${it[1][0].assembler}_abacas"
+      return it
+  }
   | set { joinInputForAbacas }
 
   // TODO SELECT BIGGER SCAFFOLD FOR NO_ABACAS ?? What about multi segment ?
@@ -123,17 +128,20 @@ workflow VIRAL_ASSEMBLY {
   inputReadsUnclassified.map {[it[0].id, it]}
   | combine(bwtIdx.map {[it[0].id, it]}, by:0)
   | map {[[it[2][0], it[1][1]], it[2]]}
+  | map {
+      it[0][0].label = "${it[0][0].id}_${it[0][0].assembler_with_abacas}"
+      return it
+  }
   | set {joinInputforBt2}
 
-  BOWTIE2(joinInputforBt2.map {it[0]}, joinInputforBt2.map {it[1]})
+  BOWTIE2(joinInputforBt2.map {it[0]},joinInputforBt2.map {it[1]})
 
-  rawSAM=BOWTIE2.out.sam
+  rawSAM = BOWTIE2.out
   SAM_BAM_SORT_IDX(rawSAM)
-  SAM_BAM_SORT_IDX.out.bam
+  SAM_BAM_SORT_IDX.out
   | set { sortedBAM }
 
   emptyFile = EMPTY_FILE()
-  //finalScaffolds.filter{it[0].realign != "yes"}
 
   refWithEmpty = faRefGenome.concat(emptyFile).map {[it[0].id, it]}
   bamWithEmpty = sortedBAM
@@ -166,7 +174,7 @@ workflow VIRAL_ASSEMBLY {
       bams << item[1]
       bais << item[2]
     }
-    meta = ["id": ids.join(","), sample_id: it[0]]
+    meta = ["id": ids.join(","), label: it[0]]
     return [
       [meta, assemblies],
       it[2][0],
