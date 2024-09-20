@@ -1,4 +1,6 @@
 // include - process
+
+include { FASTP_DEDUP } from '../../process/fastp/dedup/main.nf'
 include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
 include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
@@ -39,7 +41,9 @@ workflow VIRAL_ASSEMBLY {
       "class_tool": ["String"],
       "realign": ["String"],
       "do_abacas": ["String"],
-      "keep_before_abacas": ["String"]
+      "keep_before_abacas": ["String"],
+      "dedup": ["String"],
+      "keep_before_dedup": ["String"]
   ]
 
   // Validate metadata
@@ -56,11 +60,40 @@ workflow VIRAL_ASSEMBLY {
   | concat(sepRefGenome.other)
   | set {faRefGenome}
 
-  allFastq = UNSPRING_READS(inputReads)
+  UNSPRING_READS(inputReads)
+  UNSPRING_READS.out
+  | map {
+    new_meta = it[0].clone()
+    new_meta.initial_id = new_meta.id
+    return [new_meta, it[1]]
+  }
+  | set { allFastq }
+
+  // START Remove Duplicates Before Assembly
 
   inputReadsUnclassified = ITERATIVE_UNCLASSIFIED_READS_EXTRACTION(allFastq, inputK2Index)
 
-  inputReadsUnclassified 
+  inputReadsUnclassified.filter{ it[0].dedup == "yes" }
+  | map { 
+    new_meta = it[0].clone()
+    new_meta.id = new_meta.id + "_dedup"
+    return [new_meta, it[1]]
+  }
+  | set { readsForDedup }
+
+  dedupReads = FASTP_DEDUP(readsForDedup).reads
+
+  inputReadsUnclassified.filter{ 
+  (it[0].dedup == "no") || ((it[0].dedup == "yes") && (it[0].keep_before_dedup == "yes"))
+  }
+  | set { readsToKeep }
+
+  mergedForAssembly = readsToKeep.concat(dedupReads)
+  mergedForMapping = readsToKeep.concat(readsForDedup)
+
+  // END Remove Duplicates Before Assembly
+
+  mergedForAssembly 
   | flatMap { item ->
     def meta = item[0]
     def files = item[1]
@@ -126,7 +159,6 @@ workflow VIRAL_ASSEMBLY {
   | unique { it[0].id + it[0].assembler_with_abacas }
   | set {finalScaffolds}
 
-
   // mapping (with index building and bam sorting)
 
   finalScaffolds
@@ -137,7 +169,7 @@ workflow VIRAL_ASSEMBLY {
   BOWTIE2_BUILD.out.idx
   | set { bwtIdx }
 
-  inputReadsUnclassified.map {[it[0].id, it]}
+  mergedForMapping.map {[it[0].id, it]}
   | combine(bwtIdx.map {[it[0].id, it]}, by:0)
   | map {[[it[2][0], it[1][1]], it[2]]}
   | map {
@@ -172,7 +204,7 @@ workflow VIRAL_ASSEMBLY {
     }
   }
   | combine(bamWithEmpty, by:0)
-  | map {[it[1][0].id, it[1], it[2], it[3]]}
+  | map {[it[1][0].initial_id, it[1], it[2], it[3]]}
   | groupTuple()
   | map {
     def ids = []
