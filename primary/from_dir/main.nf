@@ -21,6 +21,9 @@ workflow PRIMARY_FROM_DIR {
     fastqc_trim_html = PRIMARY_FROM_READS.out.fastqc_trim_html
     fastqc_raw_html = PRIMARY_FROM_READS.out.fastqc_raw_html
     multiqc_html = PRIMARY_FROM_READS.out.multiqc_html
+    kraken2_report = PRIMARY_FROM_READS.out.kraken2_report
+    kraken2_output = PRIMARY_FROM_READS.out.kraken2_output
+    class_report = PRIMARY_FROM_READS.out.class_report
 }
 
 

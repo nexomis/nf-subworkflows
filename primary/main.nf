@@ -1,9 +1,10 @@
 // process include
-include { FASTP } from '../../../process/fastp/main.nf'
-include { KRAKEN2 } from '../../../process/kraken2/main.nf'
-include { SEQTK_SAMPLE as SEQTK_SAMPLE_RAW; SEQTK_SAMPLE as SEQTK_SAMPLE_TRIMMED } from '../../../process/seqtk/sample/main.nf'
-include { SPRING_DECOMPRESS } from '../../../process/spring/decompress/main.nf'
-include { FASTQC as FASTQC_RAW; FASTQC as FASTQC_TRIMMED } from '../../../process/fastqc/main.nf'
+include { FASTP } from '../../process/fastp/main.nf'
+include { KRAKEN2 } from '../../process/kraken2/main.nf'
+include { RECENTRIFUGE } from '../../process/recentrifuge/main.nf'
+include { SEQTK_SAMPLE as SEQTK_SAMPLE_RAW; SEQTK_SAMPLE as SEQTK_SAMPLE_TRIMMED } from '../../process/seqtk/sample/main.nf'
+include { SPRING_DECOMPRESS } from '../../process/spring/decompress/main.nf'
+include { FASTQC as FASTQC_RAW; FASTQC as FASTQC_TRIMMED } from '../../process/fastqc/main.nf'
 
 process PRIMARY_MULTIQC {
   container 'multiqc/multiqc:v1.21' // version above are bugged
@@ -39,10 +40,11 @@ process PRIMARY_MULTIQC {
 
 }
 
-workflow PRIMARY_FROM_READS {
+workflow PRIMARY {
   take: 
   inputReads
   dbPathKraken2
+  taxDir // got with retaxdump from recentrifuge
   numReads
 
   main:
@@ -80,7 +82,7 @@ workflow PRIMARY_FROM_READS {
 
   FASTQC_TRIMMED(subTrimmedReads)
 
-  Channel.fromPath(moduleDir + "/../multiqc.yml")
+  Channel.fromPath(moduleDir + "/multiqc.yml")
   | set {multiqcYml}
 
   FASTQC_RAW.out.zip
@@ -108,6 +110,13 @@ workflow PRIMARY_FROM_READS {
   | collect
   | set {kraken2Reports}
 
+  KRAKEN2.out.output
+  | map {it[1]}
+  | collect
+  | set {kraken2Outputs}
+
+  RECENTRIFUGE(kraken2Outputs, taxDir)
+
   PRIMARY_MULTIQC(
     fastqcRaw,
     fastqcTrimmed,
@@ -121,5 +130,8 @@ workflow PRIMARY_FROM_READS {
   fastqc_trim_html = FASTQC_TRIMMED.out.html
   fastqc_raw_html = FASTQC_RAW.out.html
   multiqc_html = PRIMARY_MULTIQC.out
+  kraken2_report = KRAKEN2.out.report
+  kraken2_output = KRAKEN2.out.output
+  class_report = RECENTRIFUGE.out.html
 
 }
