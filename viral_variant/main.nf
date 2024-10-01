@@ -1,500 +1,235 @@
-// Julien:
-//  - Meta for each input of process (with at least meta.id!)
-//  - Reduce the number of process calls by combining different processes/scripts! (The start and ending of tasks take more time!)
-//  - Threshold on minimum proportion of majority position instead of threshold on minimum proportion of secondary abundance of nucleotides.
-//  - Reference for SNP calling can be a sample!!!! So, in cases where ref_snp is a sample (=> different from ref_annotation), the definition of 'SNP' and 'coord' (always with the public reference) uses an independent process call instead of the same! Management of the same sample as reference for multiple batches?? Management of the same sample across multiple batches?
-//  - Indel Warning: plot with ASCIIviz/SamView with a filter of concerned reads and zoom in on specific regions + score of enrichment in extremity read positions (requires samtools mpileup on filtered BAM?)
-//  - Don't combine different nucleotide variations on the same codons.
-
-// For now, variant calling is performed independently of strand (management of strand specificity complicates WIG parsing and output and presents too little biological interest: at worst, workflow can be run filtering input BAM by strand mapping, no?)
-// What about uncovered regions in WIG???
-// If indel realignement not inplémenté, evaluate the possibility of removing (as an option) the ends of reads in the bam (e.g. 10% in 5' and 3').
-
-/////////////////////////
-// TODO: Issue with the management of positions in the case of segmented viruses!! Add chromosome name at position at each step to manage this!! (PS: merging all segments with NNN isn't a proper solution...)
-/////////////////////////
-
-// For later:
-//  - Indel realignment
-//  - Management of strand specificity (with filtering of BAM at the first step)
-
-
-//// VERSION 0:
-// 1a. PAIRWISE_GLOBAL_ALIGN				      (0.fa_smpl,	0.fa_ref) 						      ->	coord + snp
-// 1b. IGVTOOLS_COUNT						          (0.bam,		0.fa_ref) 						        ->	wig0
-// 2.	 ADD_REF_POS_IN_WIG					        (1b.wig0,	1a.coord) 						        ->	wig1
-// 3.	 ADD_STATS_IN_WIG					          (2.wig1)								              	->	wig2
-// 4.	 IDENTIFY_HETEROGENEOUS_POS_IN_WIG 	(3.wig2)									              ->	heterPos
-// 5.	 groovy_merge_pos_bySmpl_byBatch		(0.meta,	1a.snp,				4.heterPos)	    ->	varPosByBatch
-// 6.  regroup_wigs_and_pos_by_batch  		(3.wig2,	5.varPosByBatch,	0.refFaGFF)	->	regroupWigRefPos
-// 7.  SUMMARIZE_VARIANT_DETAILS_BY_BATCH (6.regroupWigRefPos)						        ->	wigSummaryBatch [+ VCF]
-// 8.	 [SNF_EFF]
-//// [VERSION 1:]
-// 1a. PAIRWISE_GLOBAL_ALIGN				  (0.fa_smpl,	0.fa_ref) 						                ->	coord & snp
-// 1b. IGVTOOLS_COUNT						      (0.bam,		0.fa_ref) 						                  ->	wig0
-// 2.	 WIG_TO_SUMMARIZE_WIG_BY_BATCH  (0.meta,	1b.wig0,	1a.coord,	1a.snp,	0.refFaGFF)	-> wigSummaryBatch [+ VCF...]
-// 3.  [SNF_EFF...]
-
-
-//// new conventions:
-// add stub process
-// add meta for all input process
-// refact input subworflow
-// add validation of meta keys
-// add worflow output & publish
+#!/usr/bin/env nextflow
+nextflow.preview.output = true
 
 
 // include - process
-include { IGVTOOLS_COUNT } from '../../../process/igvtools/count/main.nf'
+include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
+include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
+include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
+include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
+include { IVAR_VARIANTS_ALL_POS } from '../../process/ivar/variants/main.nf'
+include { FILTER_REGROUP_IVAR_VARIANTS } from '../../../process/filter_regroup_ivar_variants/main.nf'
+include { checkMeta } from '../utils.nf'
 
 
-// PROCESS - PYTHON : nedd to be templated
-process PAIRWISE_GLOBAL_ALIGN {
+// define process
+process CAT_UNIQUE_FILE_CONTENT {
+  container "${params.biocontainers_registry ?: 'quay.io'}/biocontainers/ubuntu:24.04"
+
   input:
-  tuple val(meta) path(sample_fa, ref_fa, arity: 2, stageAs: 'input/')  // sample_fa->alt_file   | ref_fa->ref_file
+  tuple val(meta), path(files, arity: '1..*', stageAs: 'input/')
 
   output:
-  tuple val(meta), path("${meta.id}_coords.txt", type: 'file') ,            optional:false ,  emit: coord
-  tuple val(meta), path("${meta.id}_mutations.txt", type: 'file') ,         optional:false ,  emit: snp
-  tuple val(meta), path("${meta.id}_globalAlgn.txt", type: 'file') ,        optional:true ,   emit: align
-  tuple val(meta), path("${meta.id}_mutations_details.txt", type: 'file') , optional:true ,   emit: snp_details
-
+  tuple val(meta), path("${meta.id}_concatUniq.${files[0].getExtension()}", type: 'file') , optional:false , emit: cat_uniq
 
   script:
   """
-  python3 << OFE
-  
-  from Bio import SeqIO
-  from Bio import Align
+  #!/usr/bin/bash
 
-  ref_file=${ref_fa}
-  alt_file=${sample_fa}
-  smpl_name=${meta.id}
-  verbose=True
+  cat ${files.join(' ')} | sort -u > ${meta.id}_concatUniq.${files[0].getExtension()}
+  """
 
-  aligner = Align.PairwiseAligner()
-  aligner.mode = "global"
-  aligner.match_score = 5
-  aligner.mismatch_score = -4
-  aligner.open_gap_score = -10
-  aligner.extend_gap_score = -0.5
-  aligner.target_end_gap_score = -5
-  aligner.query_end_gap_score = -5
-  parsed_records = dict()
-  parsed_records["ref"] = list(SeqIO.parse(ref_file, "fasta"))
-  parsed_records["alt"] = list(SeqIO.parse(alt_file, "fasta"))
-  records = dict()
+  stub:
+  """
+  #!/usr/bin/bash
 
-  for key in parsed_records.keys():
-    if len(parsed_records[key]) != 1:
-      sys.exit("1 and only 1 contig per fasta file required")
-    records[key] = parsed_records[key][0]
-
-  if verbose:
-    print("aligning %s with %s" % (records["ref"].id, records["alt"].id))
-
-  alignments = aligner.align(records["ref"].seq, records["alt"].seq)
-  best = alignments[0]
-  if versboe:
-    print(best)
-
-  # Parse the alignment: coords + mutations
-  alignment_array = best.__array__()
-  ref = "".join(map(lambda x: x.decode("utf-8"), alignment_array[0]))
-  alt = "".join(map(lambda x: x.decode("utf-8"), alignment_array[1]))
-
-  coords = []
-  mutations = []
-  mutations_details = []
-  if base0 :
-    ref_pos = 0
-    alt_pos = 0
-  else :
-    ref_pos = 1
-    alt_pos = 1
-
-  # TODO: add -1 if out of ref (5' or 3') using alt/ref_pos and length of ref/alt + add del/ins after end to prevent gaps at end ?
-  track="start"
-  for i in range(best.length):
-    ref_char = ref[i]
-    alt_char = alt[i]
-    if ref_char != '-' and alt_char != '-':
-      if ref_char != alt_char:
-        mutations.append(ref_pos)
-        mutations_details.append((ref_pos, alt_pos, 'Mismatch', ref_char, alt_char))
-      coords.append((ref_pos, alt_pos))
-      ref_pos += 1
-      alt_pos += 1
-      track="hit"
-    elif ref_char == '-' and alt_char != '-':
-      mutations.append(ref_pos)
-      coords.append((ref_pos, alt_pos))
-      if track == "start":
-        mutations_details.append((ref_pos, alt_pos, 'Insertion_before_start', '-', alt_char))
-      elif track == "ins":
-        mutations_details.append((ref_pos, alt_pos, 'Insertion_extend', '-', alt_char))
-        track="ins"
-      else:
-        mutations_details.append((ref_pos, alt_pos, 'Insertion_open', '-', alt_char))
-        track="ins"
-      alt_pos += 1
-    elif ref_char != '-' and alt_char == '-':
-      mutations.append(ref_pos)
-      coords.append((ref_pos, alt_pos))
-      if track == "start":
-        mutations_details.append((ref_pos, alt_pos, 'Deletion_before_start', ref_char, '-'))
-      elif track == "del":
-        mutations_details.append((ref_pos, alt_pos, 'Deletion_extend', ref_char, '-'))
-        track="del"
-      else:
-        mmutations_details.append((ref_pos, alt_pos, 'Deletion_open', ref_char, '-'))
-        track="del"
-      ref_pos += 1
-
-  # Save results on files
-  mutations_file = smpl_name + "_mutations.txt"
-  with open(mutations_file, 'w') as f_mut:
-      f_mut.write("Mutations positions:\n")
-      for mutation in mutations:
-          f_mut.write(f"{mutation}\n")
-
-  coords_file = smpl_name + "_coords.txt"
-  with open(coords_file, 'w') as f_coords:
-      f_coords.write("Coordinates (ref_pos, alt_pos):\n")
-      for coord in coords:
-          f_coords.write(f"{c[0]},{c[1]}\n")
-
-  if verbose:
-    mutations_details_file = smpl_name + "_mutations_details.txt"
-    with open(mutations_details_file, 'w') as f_details:
-        f_details.write("Mutations details (ref_pos, alt_pos, type, ref_char, alt_char):\n")
-        for mutation in mutations_details:
-            f_details.write(f"{mutation[0]},{mutation[1]},{mutation[2]},{mutation[3]},{mutation[4]}\n")
-    
-    alignment_file = smpl_name + "_globalAlgn.txt"
-    with open(alignment_file, 'w') as f_align:
-      f_align.write("Best Alignment in plain text:\n")
-      f_align.write(best.format('clustal'))
-  
-  EOF
+  touch ${meta.id}_concatUniq.${files[0].getExtension()}
   """
 }
 
-process ADD_REF_POS_IN_WIG {
-  input:
-  tuple val(meta), path(wigFile, coordFile, arity: 2, stageAs: 'input/')      // wig file, output of 'igvtools count' (unstranded !) AND coordoné between bam_ref (usually assembled genome) in 'PosInBamRef' column and reference genome (usually public reference) in 'PosInGeneralRef' column
-
-  output:
-  tuple val(meta), path("${meta.id}_w_ref.wig", type: 'file') , optional:false , emit: wig     // input wig enrichised by "Pos in Ref" column
-
-  script:
-  """
-  python3 << OFE
-  import csv
-
-  with open('${coordFile}', 'r') as coord_f, open('${wigFile}', 'r') as wig_f:
-    coords = {int(row['PosInBamRef']): int(row['PosInGlobalRef']) for row in csv.DictReader(coord_f)}
-    output_lines = []
-
-    for line in wig_f:
-      if line.startswith('#') or line.startswith('track') or line.startswith('variableStep'):
-        output_lines.append(line)
-      else:
-        fields = line.strip().split()
-        pos_bam = int(fields[0])
-        pos_ref = coords.get(pos_bam, 'NA')
-        output_lines.append(f'{fields[0]}\t{pos_ref}\t' + '\t'.join(fields[1:]))
-    
-    with open('${meta.id}_w_ref.wig', 'w') as out_wig_f:
-      for output_line in output_lines:
-      out_wig_f.write(output_line + '\\n')
-      
-  EOF
-  """
-}
-
-process ADD_STATS_IN_WIG {
-  input:
-  tuple val(meta), path(wigFile, arity: 1, stageAs: 'input/')      // wig file enrichised by "Pos in Ref" column
-
-  output:
-  tuple val(meta), path("${meta.id}_w_stats.wig", type: 'file') , optional:false , emit: wig     // input wig enrichised by coverage and proportions columns
-
-  script:
-  """
-  python3 << OFE
-  with open('${wigFile}', 'r') as wig_f:
-    output_lines = []
-
-    for line in wig_f:
-      if line.startswith('#') or line.startswith('track') or line.startswith('variableStep'):
-        output_lines.append(line)
-      else:
-        fields = line.strip().split()
-        counts = [float(x) for x in fields[2:8]]
-        cov = sum(counts)
-        if cov == 0:
-          stats = [0.0] * 6 + [cov]
-        else:
-          proportions = [count / cov for count in counts]
-          stats = proportions + [cov]
-        output_lines.append(line.strip() + '\\t' + '\\t'.join(map(str, stats)))
-
-    with open('${meta.id}_w_stats.wig', 'w') as out_f:
-      for output_line in output_lines:
-        out_f.write(output_line + '\\n')
-      
-  EOF
-  """
-}
-
-process IDENTIFY_HETEROGENEOUS_POS_IN_WIG {
-    input:
-    tuple val(meta), path(wigFile, arity: 1, stageAs: 'input/')      // wig file enrichised by "Pos in Ref" and statistics
-
-    output:
-    tuple val(meta), val(HETEROGENEOUS_POS) , optional:false , emit: list_pos  // list of heeterogeneous position ('Pos in Ref')
-
-    script:
-    """
-    python3 << OFE
-  # TODO: use column name instead of relative postition ?
-
-  min_prop_variant = 0.1  # threshold for proportion of heterogenous status - ${task.ext.heterogn_prop_min ?: 0.1}
-  min_cov = 30  # threshold for coverage of heterogenous status - ${task.ext.heterogn_cov_min ?: 30}
-
-  with open('${wigFile}', 'r') as wig_f:
-    positions = []
-    for line in wig_f:
-      if line.startswith('#') or line.startswith('track') or line.startswith('variableStep'):
-        continue
-      else:
-        fields = line.strip().split()
-        cov = float(fields[-1])
-        if cov > min_cov :
-          props = [float(x) for x in fields[-7:-1]]  # % A, C, G, T, INS, DEL
-          second_abundance = sorted(props, reverse=True)[1]
-          if second_abundance > min_prop_variant :
-            pos_ref = fields[1]  
-            positions.append(pos_ref)
-      print(positions)    # return val instead of file this implies that this process process will be systematically executed, even with the '-resume'. TODO: in theory, it seems to me that the following steps of worflow should be compatible with option '-resume', but this need to be verified!
-      
-    EOF
-    """
-}
-
-process SUMMARIZE_VARIANT_DETAILS_BY_BATCH {
-  input:
-  tuple val(meta), path(wig_files, arity: 1.., stageAs: 'input/')       // with meta.id=batch_id, and meta.sample_ids=lis of sample ids 
-  path(ref_fa, ref_gff, arity: 2, stageAs: 'input/')
-  val variantsPos           // no meta ???
-
-  output:
-  tuple val(meta.id), path("${meta.id}_variant_summary.tab", type: 'file') , optional:false , emit: tab
-
-  script:
-  """
-  python3 << OFE
-
-  from Bio import SeqIO
-  from BCBio import GFF
-  import pandas as pd
-
-  ref_seq = SeqIO.read("${ref_fa}", "fasta")
-  ref_gff = list(GFF.parse(open("${ref_gff}")))
-
-  variant_positions = ${variantsPos}        ## for templating
-
-  # summary df
-  summary_df = pd.DataFrame(columns=["Ref_Pos", "Ref_Nucl", "Ref_ProtName", "Ref_ProtPos"])
-
-  # ref inf. to summary df
-  for pos in variant_positions:
-    ref_nucl = ref_seq.seq[pos - 1]  # La séquence est indexée à partir de 0
-    prot_name, prot_pos = "Intergenic", None
-    for rec in ref_gff:
-      for feature in rec.features:
-        if feature.type == "gene":
-          if feature.location.start <= pos <= feature.location.end:
-          prot_name = feature.qualifiers.get('Name', ['Unknown'])[0]
-          prot_pos = pos - feature.location.start + 1
-    summary_df = summary_df.append({
-      "Ref_Pos": pos,
-      "Ref_Nucl": ref_nucl,
-      "Ref_ProtName": prot_name,
-      "Ref_ProtPos": prot_pos
-    }, ignore_index=True)
-
-  # parse wig: extract stat by smpl
-  sample_stats = {}
-
-  for sample_id, wig_file in zip(${meta.sample_ids}, ${wig_files}):
-    # parse smpl wig
-    bases_order = ['A', 'C', 'G', 'T', 'N', 'Del', 'Ins']
-    with open(wig_file, 'r') as f:
-      for line in f:
-        if line.startswith('track'):
-          continue
-        elif line.startswith('variableStep'):
-          continue
-        #elif line.startswith('#Columns:'):
-        #  cols = line.replace("^#Columns: ", "").split(',').strip()
-        #  bases_order = [col.strip().replace("^Combined Strands ", "") for col in cols]
-        else:
-          cols = line.strip().split()
-          pos = int(cols[0])
-          if pos in variant_positions:
-            bases_count = map(int, cols[2:7])  # A, C, G, T, N, DEL, INS
-            consensus = max(zip(bases_order, bases_count), key=lambda x: x[1])[0]
-            pA, pC, pG, pT, pN, pDel, pIns, cov = cols[8:14]
-            pos_smpl = cols[1]
-            
-            sample_stats.setdefault(pos, {})[sample_id] = {
-              'Cov': cov,
-              'Consensus': consensus,
-              'pA': pA, 'pC': pC, 'pG': pG, 'pT': pT,
-              'pN': pN, 'pDel': pDel, 'pIns': pIns,
-              'Pos_smpl': pos_smpl
-            }
-
-  # put smpl stats (from parsed wig) to summary_df
-  for pos in variant_positions:
-    if pos in sample_stats:
-      for sample_id, stats in sample_stats[pos].items():
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_Cov'] = stats['Cov']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_Consensus'] = stats['Consensus']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_Pos'] = stats['pos_smpl']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_pA'] = stats['pA']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_pC'] = stats['pC']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_pG'] = stats['pG']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_pT'] = stats['pT']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_pN'] = stats['pN']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_pDel'] = stats['pDel']
-        summary_df.loc[summary_df['Ref_Pos'] == pos, f'{sample_id}_pIns'] = stats['pIns']
-    else :
-      for sample_id in sample_ids:
-        columns = [f'{sample_id}_Cov', f'{sample_id}_Consensus', f'{sample_id}_Pos'] + [f'{sample_id}_p{base}' for base in ['A', 'C', 'G', 'T', 'N', 'Del', 'Ins']]
-        summary_df.loc[summary_df['Ref_Pos'] == pos, columns] = None
-  # save summary_df
-  summary_df.to_csv("${meta.id}_variant_summary.txt", sep="\t", index=False)
-
-  EOF
-  """
-}
 
 
 workflow VIRAL_VARIANT {
-
   take:
-  inputs // (id, (meta, [reads_on_assembled_bam, {reads_on_assembled_bai}]), [assembled_fa, assembled_fai], [ref_genome_fa, ref_genome_gff]) with {xxx} = optional
-  // TODO: meta.args_igvcount depend of params.variant_by_strand ?
-  // TODO: meta.batch_id about samplesheet
-  // !!!!!!!!! be carefull, by default fasta_sample, fasta_ref (gff_ref) and ref in bam are oriented in same strand !!!!!!!!!!!!
+  inReads   // (meta, [fq_r1, {fq_r2}]): meta.id (sample_id), meta.batch_id, meta.rank_in_batch
+  inRef     // (meta_ref, [inRef_fa, {inRef_gff}]): meta.id (containt batch_id)
+  inAnnot  // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (containt batch_id)
+  // todo: manage compresed files (fa.gz and gff.gz / fq.gz compatile with all mapping tools)
+  // recquired: "inAnnot_fa" need to be in same strand than "inRef_fa"!
+  // recquired: one and only one batch_id by sample_id: sample_id is specific to one batch_id and batch_id is recquired (even in case of only one sample by batch)
+  // recquired: 'inReads.meta' keys: id, batch_id and rank_in_batch
+  // recquired: 'inAnnot' defined cwhen and only when 'inRef_fa' is defined and 'inRef_gff' is not defined
+  // if meta.batch_id not in inRef.id on reciproque -> error
+
+  // TODO: MANAGE cse where 'inAnnot' is null !
 
   main:
   
-  // separate input tuple
-  inputBam = inputs.map { [it[0], it[1]] }
-  inputAssembledFa = inputs.filter { it[1] } | map { [it[0], it[2]] }
-  inputRefGenomeFaGFF = inputs.filter { it[1] } | map { [it[0], it[3]] }
-
-  // Validate metadata
+  //// Validate input
+   // validate metadata structure
   def expectedMeta = [
-    "id": ["String", "NullObject"],
-    "batch_id": ["String", "NullObject"]
+    "batch_id": ["String"],
+    "rank_in_batch": ["Integer"],   // todo: remaind it optional using meta.id alpha numeric order ? but if its define 
   ]
-  inputBam.map { checkMeta(it[1][0], expectedMeta) }
-
-  // Position equivalence between assembled genome and general reference (coord) + SNP position (snp)
-  inputAssembledFaOnly = inputAssembledFa.map { [it[0], it[1][0]] }
-  inputRefGenomeFa = inputRefGenomeFaGFF.map { [it[0], it[1][0] }
-  joinAssembledFaOnlyAndRefGenomeFa = inputAssembledFaOnly.join(inputRefGenomeFa, by:0)
-  PAIRWISE_GLOBAL_ALIGN(joinAssembledFaOnlyAndRefGenomeFa)    // add meta in input channel !
-  coord = PAIRWISE_GLOBAL_ALIGN.out.coord
-  snp = PAIRWISE_GLOBAL_ALIGN.out.snp
-
-  // Position abundances details (wig2) and heterogenous position (heterogenous_pos)
-  joinInputBamAndAssembledFa = inputBam.join(inputAssembledFa, by:0)
-  IGVTOOLS_COUNT(joinInputBamAndAssembledFa.map { it[1] }, joinInputBamAndAssembledFa.map { it[2] })
-  wig0 = IGVTOOLS_COUNT.out.wig
-
-  wig0withID = wig0.map { it[0].id, [it[0], it[1]] }
-  joinWig0AndCoord = wig0withID.join(coord, by:0)
-  ADD_REF_POS_IN_WIG(joinWig0AndCoord.map { it[1] }, joinWig0AndCoord.map { it[2] })
-  wig1 = ADD_REF_POS_IN_WIG.out.wig
-  
-  ADD_STATS_IN_WIG(wig1)
-  wig2 = ADD_STATS_IN_WIG.out.wig
-  
-  IDENTIFY_HETEROGENEOUS_POS_IN_WIG(wig2)
-  heterogenousPosPath = IDENTIFY_HETEROGENEOUS_POS_IN_WIG.out.pos_list
-
-  // Merge interest position by sample (snp + heterogenous_pos)
-  heterogenousPos = heterogenousPosPath.map { meta, posFile ->
-    def pos = posFile.text.readLines().collect { it as Integer }
-    return [meta, pos] }
-  heterogenousPosWithID = heterogenousPos.map { it[0].id, it[1] }
-
-  joinSnpPosAndHeterogenousPos = snp.join(heterogenousPosWithID, by:0)
-  variantsPosBySample = joinSnpPosAndHeterogenousPos.map { id, snpPos, heterogenousPos ->
-    def mergedPos = (snpPos + heterogenousPos).unique().sort()
-    return [id, mergedPos]}
-
-  // Merge variants posisitons by batch
-  id2Batch = inputs.map { [it[0], it[1][0].batch ] }
-  joinVarPosBySmplAndId2Batch = variantsPosBySample.join(id2Batch, by: 0)
-  varPosBySmplBatchTag = joinedChannel.map { it[2], it[1] }
-  variantsPosByBatch = positionsByBatch.groupTuple(by: 0)
-    .map { batch, listPos -> 
-      def mergedPos = listPos.flatten().unique().sort()
-      return tuple(batch, mergedPos) }
-  
-  // Extract variants details (variantsPosByBatch / wig2) and save it on file
-
-  wig2ByBatch = wig2
-    .map { meta, wig -> tuple(meta.batch_id, meta.id, wig) }
-    .groupTuple(by: 0)
-    .map { batch_id, list_of_meta_and_wigs ->
-      def sample_ids = list_of_meta_and_wigs.collect { it[0] }
-      def wig_paths = list_of_meta_and_wigs.collect { it[1] }
-      def meta = [id: batch_id, sample_ids: sample_ids]
-      tuple(val(meta), paths(wig_paths))    // path/paths when arity: 1 ?? need to be a list ?
+  inReads.map { checkMeta(it, expectedMeta) }
+  inRef.map { checkMeta(it) }
+  inRef.map { checkMeta(it) } 
+  // validate arity of paths of each inputs
+  readsBatches = inReads.map { meta, file ->
+    assert file.size() in 1..2 : "nb reads files not attempted (${meta}, ${file})"
+  }
+  refBatches = inRef.map { meta, file ->
+    assert file.size() in 1..2 : "nb ref files not attempted (${meta}, ${file})"
+  }
+  annotBatches = inAnnot.map { meta, file ->
+    assert file.size() == 2 : "nb annot files not attempted (${meta}, ${file})"
+  }
+  // validate concordance between batch of reads and batch of reference
+  readsBatches = inReads.map {it[0].batch_id}
+  refBatches = inRef.map { it[0].id }
+  readsBatchesCount = readsBatches
+                        .unique()
+                        .count()
+  refBatchesCount = refBatches.count()
+  maxBatchesCount = readsBatchesCount
+                      .join(refBatchesCount)
+                      .max()
+  unionBatchesCount = readsBatches
+                        .unique()
+                        .join(refBatches, remainder: true)
+                        .count()
+  unionBatchesCount
+    .combine(maxBatchesCount)
+    .map { union, max ->
+      if (union != max) {
+        error "Error: Different batches between reads and reference."
+      }
     }
-  //// if don't work:
-  // wig2ByBatch = wig2
-  //   .map { meta, wig -> tuple(meta.batch_id, meta.id, wig) }
-  //   .groupTuple(by: 0)
-  //   .map { batch_id, list_of_meta_and_wigs ->
-  //     def sample_ids = list_of_meta_and_wigs.collect { it[0] }
-  //     def wig_paths = list_of_meta_and_wigs.collect { it[1] }
-  //     tuple(batch_id, tuple(sample_ids, wig_paths))
-  //   }
-  //   .map { batch_id, (sample_ids, wig_paths) ->
-  //     def meta = [id: batch_id, sample_ids: sample_ids]
-  //     tuple(val(meta), wig_paths)
-  //   }
+  // validate absence of duplicatation of ananotation (includde verification of concordance between batch of reference and potential batch of annotation)
+  inRefIdTag = inRef.map { [ it[0].id, it[1] ] }
+  inAnnotIdTag = inAnnot.map { [ it[0].id, it[1] ] }
+  inRefIdTag
+    .join(inAnnotIdTag, remainder: true)
+    .map {batch_id, ref, annot ->
+      if (ref == null) {
+        error "Error: reference undefined (${batch_id})"
+      } else if (!( ((ref.size() == 1) && (annot != null)) ||
+                    ((ref.size() == 2) && (annot == null)) )) {
+          error "Error: annotation undefined or defined twice (at 'reference' and at 'annotation') (${batch_id})"
+      }
+    }
 
-  sample2Batch = wig2
-    .map { meta, wig -> tuple(meta.id, meta.batch_id) }
-  
-  batch2RefGenomeFaGFF = sample2Batch
-    .join(inputRefGenomeFaGFF, by: 0)
-    .map { it[0], it[2]}
-    .unique()         // tuple ( val(batch_id), paths(ref_fa, ref_gff) )
 
-  inputSummarizeVar = wig2ByBatch
-    .map { meta, wig_paths -> val(meta.id), tuple(meta, wig_paths) }
-    .join (variantsPosByBatch, by: 0)
-    .join (batch2RefGenomeFaGFF, by: 0) // tuple( val(batch_id), tuple( val(meta), paths(wigs) ), path(ref_fa, ref_gff), val(variantsPosByBatch) ) 
+  // Transfert annotation from inAnnot to inRef (when no inRef_gff) + genomic coord dict: g.inRefSNV -> g.inRefCoord (TODO for last step of worflow: g.inRefCoord -> c.inRefCoord or coding -> coding to manage case where 1 locus is asigned to multiple coding element)
+  // manage multifasta on python script
+  // to simplify script: use the native alignment, complete it with the missing position by extrapotation and add beforeX and afterX simply by counting the number of '-'' at the end of alignment.seq() ?
+ 
+  refBatchTag = inRef.map { [ it[0].id, it ] }
 
-  SUMMARIZE_VARIANT_DETAILS_BY_BATCH(inputSummarizeVar[1], inputSummarizeVar[2], inputSummarizeVar[3])
+  refBatchTagAnnotStatus = refBatchTag.branch {
+                             reannot: it[1][1].size() == 1
+                             with_own_annotation: it[1][1].size() == 2
+                             other: error "Unexpected input encountered (error nb files given: '${it}')" }
 
-  // VCF about bam + PAIRWISE_GLOBAL_ALIGN.algn OR parse wig + PAIRWISE_GLOBAL_ALIGN.snp_details ??
-  // ...
+  annotBatchTag = inAnnot.map { [ it[0].id, it ] }
 
+  joinRefReannotAndAnnot = refBatchTagAnnotStatus.reannot.join(annotBatchTag, by: 0)
+
+  //save_psa = 1   // boolean
+  //include_metada_in_gff = 1   // boolean
+  TRANSFERT_GFF(joinRefReannotAndAnnot.map { it[1] },
+                joinRefReannotAndAnnot.map { it[2] })
+                //save_psa,
+                //include_metada_in_gff)
+
+  //TRANSFERT_GFF.out.genomic_coords
+  transferedAnnot = TRANSFERT_GFF.out.transfered_gff
+  refWithTransferedAnnot = joinRefReannotAndAnnot
+                            .map { [ it[1][0].id, it[1] ] }
+                            .join ( transferedAnnot.map { [ it[0].id, it ] }, by: 0)
+                            .map{ [ it[1][0], [ it[1][1][0], it[2][1] ] ] }  // tuple (meta, [fa, gff])
+  //TRANSFERT_GFF.out.psa
+
+
+
+  // mapping (with index building and bam sorting)
+  BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
+  bwtIdx = BOWTIE2_BUILD.out.idx
+
+  readsBatchTag = inReads.map { [ it[0].batch_id, it ] }
+  bwtIdxBatchTag = bwtIdx.map { [ it[0].id, it ] }
+  mergedInMapping = readsBatchTag.combine(bwtIdxBatchTag, by: 0)
+  BOWTIE2(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
+
+  rawSAM = BOWTIE2.out.sam
+  SAM_BAM_SORT_IDX(rawSAM)
+  sortedBAM = SAM_BAM_SORT_IDX.out.bam
+
+
+  // for later: mark duplicate
+  // for later: indel realignment
+  // for later: sort/index
+
+
+  // for later: ivar consensus - from specific mpileup to set specific parameters (quality, depth, ...)
+
+
+  // mpileup + ivar enrich (add cov on remaning pos) + select pos iSNVs
+  // (not distinct process ot fixe interest parameters on mpileup and ensure thats remain only stable (at 100%) region from ivar output who can be catch from mpiluep)
+
+  completeRefBatchTag = refBatchTagAnnotStatus.with_own_annotation
+                          .mix( refWithTransferedAnnot
+                            .map { [ it[0].id, it ] } )
+
+  bamWithRefBatchTag = sortedBAM
+                         .map{ [ it[0].batch_id, [ it[0], [it[1], it[2]] ] ] }
+                         .combine(completeRefBatchTag, by: 0)
+
+  IVAR_VARIANTS_ALL_POS( bamWithRefBatchTag.map { it[1] },
+                         bamWithRefBatchTag.map { it[2] } )
+
+  ivarRawBySmpl = IVAR_VARIANTS_ALL_POS.out.raw_tsv
+  iSNVposBySmpl = IVAR_VARIANTS_ALL_POS.out.filter_iSNV_pos
+
+
+  // regroup pos iSNVs by batch (in same process than following ?)
+  iSNVposByBatch = iSNVposBySmpl
+                     .map{ [ it[0].batch_id, it[1] ] }
+                     .groupTuple()
+                     .map { [ [id:it[0]], it[1] ] }
+
+  CAT_UNIQUE_FILE_CONTENT(iSNVposByBatch)
+  iSNVposByBatch = CAT_UNIQUE_FILE_CONTENT.out.cat_uniq
+
+
+  // filter ivar_complete to keep only interest pos and write summary file by batch (following order designed by 'rank_in_batch' key)
+
+  ivarRawFilesByBatch = ivarRawBySmpl
+                          .map { [it[0].rank_in_batch as Integer, it[0].batch_id, it[1] ] }
+                          .toSortedList{ a, b -> a[0] <=> b[0] }
+                          .flatMap()
+                          .map { [ it[1], it[2] ] }
+                          .groupTuple()
+                          .map { [ [id:it[0]], it[1] ] }
+
+  joinIvarRawFilesByBatchAndPos = ivarRawFilesByBatch
+                                    .map { [ it[0].id, it[1] ] }
+                                    .join(iSNVposByBatch
+                                            .map { [ it[0].id, it[1] ] })
+
+  FILTER_REGROUP_IVAR_VARIANTS( joinIvarRawFilesByBatchAndPos.map { [ [id:it[0]], it[1] ]  },
+                                joinIvarRawFilesByBatchAndPos.map { [ [id:it[0]], it[2] ]  } )
+
+  varByBatch = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs
+  varByBatchIndFile = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_summary_all_iSNVs
+
+
+  // for later: in option (at batch level when 'inAnnot' !) edit coord in batch_summary_all_iSNVs (and individual file ?): g.inAnnot -> g.inRefCoord and g.inRefCoord -> c.inRefCoord
+  // (with management of locus assigned to multiple genes!!! better genes_ref -> genes_alt???)
+
+
+  // for later: plots QC and results
+  // (% and nb reads mapped, alignement score, % bases assigned, cov of each smpl by batch, % base covered, % variable base uncovered on at least one smpl (by batch), indel warning)
+
+
+  // output: dir with filtered iVar + summarizedIVAR by batch + transfered annotation + psa
 
   emit:
-  summary_nucl = SUMMARIZE_VARIANT_DETAILS_BY_BATCH.out.tab
-
+  var_by_batch = varByBatch
+  var_by_smpl_raw = ivarRawBySmpl                          //
+  var_by_batch_ind_smpl_file = varByBatchIndFile
+  transfered_gff = refWithTransferedAnnot.map { it[1][1] }
+  psa_algn = TRANSFERT_GFF.out.psa                         //
+  psa_genomic_coords = TRANSFERT_GFF.out.genomic_coords    //
 }
 
