@@ -178,7 +178,7 @@ workflow VIRAL_VARIANT {
   IVAR_VARIANTS_ALL_POS( bamWithRefBatchTag.map { it[1] },
                          bamWithRefBatchTag.map { it[2] } )
 
-  ivarRawBySmpl = IVAR_VARIANTS_ALL_POS.out.raw_tsv
+  ivarRawBySmpl = IVAR_VARIANTS_ALL_POS.out.raw_iSNV_tsv
   iSNVposBySmpl = IVAR_VARIANTS_ALL_POS.out.filter_iSNV_pos
 
 
@@ -210,6 +210,7 @@ workflow VIRAL_VARIANT {
   FILTER_REGROUP_IVAR_VARIANTS( joinIvarRawFilesByBatchAndPos.map { [ [id:it[0]], it[1] ]  },
                                 joinIvarRawFilesByBatchAndPos.map { [ [id:it[0]], it[2] ]  } )
 
+  // add 'IVAR_VARIANTS_ALL_POS.out.mpileup_cov' as input of 'FILTER_REGROUP_IVAR_VARIANTS' to fill the blanks REF_DP at unvaribale position/sample
   varByBatch = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs
   varByBatchIndFile = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_summary_all_iSNVs
 
@@ -226,7 +227,9 @@ workflow VIRAL_VARIANT {
 
   emit:
   var_by_batch = varByBatch
-  var_by_smpl_raw = ivarRawBySmpl                          //
+  var_by_smpl_raw = ivarRawBySmpl                        //
+  IVAR_VARIANTS_ALL_POS.out.mpileup_cov                  //
+  IVAR_VARIANTS_ALL_POS.out.filter_iSNV_tsv              //
   var_by_batch_ind_smpl_file = varByBatchIndFile
   transfered_gff = refWithTransferedAnnot.map { it[1][1] }
   psa_algn = TRANSFERT_GFF.out.psa                         //
