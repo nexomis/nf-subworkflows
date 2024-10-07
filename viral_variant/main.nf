@@ -3,11 +3,18 @@ nextflow.preview.output = true
 
 
 // include - process
+<<<<<<< HEAD
 include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
 include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
 include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
 include { ABRA2 } from '../../process/abra2/main.nf'
+=======
+include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
+include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
+include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
+include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
+>>>>>>> ffc25db50e152622349d1c8158fa334c620a549c
 include { IVAR_VARIANTS_ALL_POS } from '../../process/ivar/variants/main.nf'
 include { FILTER_REGROUP_IVAR_VARIANTS } from '../../../process/filter_regroup_ivar_variants/main.nf'
 include { checkMeta } from '../utils.nf'
@@ -139,9 +146,15 @@ workflow VIRAL_VARIANT {
                             .map { [ it[1][0].id, it[1] ] }
                             .join ( transferedAnnot.map { [ it[0].id, it ] }, by: 0)
                             .map{ [ it[1][0], [ it[1][1][0], it[2][1] ] ] }  // tuple (meta, [fa, gff])
+<<<<<<< HEAD
   //TRANSFERT_GFF.out.psa   
 
   // useful ? for later? reads correction (already performed in spades?)
+=======
+  //TRANSFERT_GFF.out.psa
+
+
+>>>>>>> ffc25db50e152622349d1c8158fa334c620a549c
 
   // mapping (with index building and bam sorting)
   BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
@@ -158,6 +171,7 @@ workflow VIRAL_VARIANT {
 
 
   // for later: mark duplicate
+<<<<<<< HEAD
 
 
   // indel realignment (include sort/index): Ideally, do it at batch level ?
@@ -168,6 +182,12 @@ workflow VIRAL_VARIANT {
   ABRA2( mergedInAbra2.map{ it[1] }, mergedInAbra2.map{ it[2] })
   realignedBAM = ABRA2.out.bam
 
+=======
+  // for later: indel realignment
+  // for later: sort/index
+
+
+>>>>>>> ffc25db50e152622349d1c8158fa334c620a549c
   // for later: ivar consensus - from specific mpileup to set specific parameters (quality, depth, ...)
 
 
@@ -178,14 +198,22 @@ workflow VIRAL_VARIANT {
                           .mix( refWithTransferedAnnot
                             .map { [ it[0].id, it ] } )
 
+<<<<<<< HEAD
   bamWithRefBatchTag = realignedBAM
+=======
+  bamWithRefBatchTag = sortedBAM
+>>>>>>> ffc25db50e152622349d1c8158fa334c620a549c
                          .map{ [ it[0].batch_id, [ it[0], [it[1], it[2]] ] ] }
                          .combine(completeRefBatchTag, by: 0)
 
   IVAR_VARIANTS_ALL_POS( bamWithRefBatchTag.map { it[1] },
                          bamWithRefBatchTag.map { it[2] } )
 
+<<<<<<< HEAD
   ivarRawBySmpl = IVAR_VARIANTS_ALL_POS.out.raw_iSNV_tsv
+=======
+  ivarRawBySmpl = IVAR_VARIANTS_ALL_POS.out.raw_tsv
+>>>>>>> ffc25db50e152622349d1c8158fa334c620a549c
   iSNVposBySmpl = IVAR_VARIANTS_ALL_POS.out.filter_iSNV_pos
 
 
@@ -217,7 +245,10 @@ workflow VIRAL_VARIANT {
   FILTER_REGROUP_IVAR_VARIANTS( joinIvarRawFilesByBatchAndPos.map { [ [id:it[0]], it[1] ]  },
                                 joinIvarRawFilesByBatchAndPos.map { [ [id:it[0]], it[2] ]  } )
 
+<<<<<<< HEAD
   // add 'IVAR_VARIANTS_ALL_POS.out.mpileup_cov' as input of 'FILTER_REGROUP_IVAR_VARIANTS' to fill the blanks REF_DP at unvaribale position/sample
+=======
+>>>>>>> ffc25db50e152622349d1c8158fa334c620a549c
   varByBatch = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs
   varByBatchIndFile = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_summary_all_iSNVs
 
@@ -234,9 +265,13 @@ workflow VIRAL_VARIANT {
 
   emit:
   var_by_batch = varByBatch
+<<<<<<< HEAD
   var_by_smpl_raw = ivarRawBySmpl                        //
   IVAR_VARIANTS_ALL_POS.out.mpileup_cov                  //
   IVAR_VARIANTS_ALL_POS.out.filter_iSNV_tsv              //
+=======
+  var_by_smpl_raw = ivarRawBySmpl                          //
+>>>>>>> ffc25db50e152622349d1c8158fa334c620a549c
   var_by_batch_ind_smpl_file = varByBatchIndFile
   transfered_gff = refWithTransferedAnnot.map { it[1][1] }
   psa_algn = TRANSFERT_GFF.out.psa                         //
