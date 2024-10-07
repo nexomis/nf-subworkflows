@@ -154,7 +154,7 @@ workflow VIRAL_VARIANT {
 
   rawSAM = BOWTIE2.out
   SAM_BAM_SORT_IDX(rawSAM)
-  sortedBAM = SAM_BAM_SORT_IDX.out
+  sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
 
 
   // for later: mark duplicate
@@ -235,11 +235,12 @@ workflow VIRAL_VARIANT {
   emit:
   var_by_batch = varByBatch
   var_by_smpl_raw = ivarRawBySmpl                        //
-  IVAR_VARIANTS_ALL_POS.out.mpileup_cov                  //
-  IVAR_VARIANTS_ALL_POS.out.filter_iSNV_tsv              //
+  subset_cov = IVAR_VARIANTS_ALL_POS.out.mpileup_cov     //
+  var_by_smpl_filter = IVAR_VARIANTS_ALL_POS.out.filter_iSNV_tsv              //
   var_by_batch_ind_smpl_file = varByBatchIndFile
   transfered_gff = refWithTransferedAnnot.map { it[1][1] }
   psa_algn = TRANSFERT_GFF.out.psa                         //
   psa_genomic_coords = TRANSFERT_GFF.out.genomic_coords    //
+  flagstat = SAM_BAM_SORT_IDX.out.flagstat
 }
 
