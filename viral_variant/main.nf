@@ -3,10 +3,11 @@ nextflow.preview.output = true
 
 
 // include - process
+include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
 include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
 include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
-include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
+include { ABRA2 } from '../../process/abra2/main.nf'
 include { IVAR_VARIANTS_ALL_POS } from '../../process/ivar/variants/main.nf'
 include { FILTER_REGROUP_IVAR_VARIANTS } from '../../../process/filter_regroup_ivar_variants/main.nf'
 include { checkMeta } from '../utils.nf'
@@ -138,9 +139,9 @@ workflow VIRAL_VARIANT {
                             .map { [ it[1][0].id, it[1] ] }
                             .join ( transferedAnnot.map { [ it[0].id, it ] }, by: 0)
                             .map{ [ it[1][0], [ it[1][1][0], it[2][1] ] ] }  // tuple (meta, [fa, gff])
-  //TRANSFERT_GFF.out.psa
+  //TRANSFERT_GFF.out.psa   
 
-
+  // useful ? for later? reads correction (already performed in spades?)
 
   // mapping (with index building and bam sorting)
   BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
@@ -157,9 +158,15 @@ workflow VIRAL_VARIANT {
 
 
   // for later: mark duplicate
-  // for later: indel realignment
-  // for later: sort/index
 
+
+  // indel realignment (include sort/index): Ideally, do it at batch level ?
+  bamBatchTag = sortedBAM.map { [ it[0].batch_id, it ] }
+  refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
+  mergedInAbra2 = bamBatchTag.combine(refBatchTag, by: 0)
+
+  ABRA2( mergedInAbra2.map{ it[1] }, mergedInAbra2.map{ it[2] })
+  realignedBAM = ABRA2.out.bam
 
   // for later: ivar consensus - from specific mpileup to set specific parameters (quality, depth, ...)
 
@@ -171,7 +178,7 @@ workflow VIRAL_VARIANT {
                           .mix( refWithTransferedAnnot
                             .map { [ it[0].id, it ] } )
 
-  bamWithRefBatchTag = sortedBAM
+  bamWithRefBatchTag = realignedBAM
                          .map{ [ it[0].batch_id, [ it[0], [it[1], it[2]] ] ] }
                          .combine(completeRefBatchTag, by: 0)
 
