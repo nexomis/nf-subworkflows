@@ -152,9 +152,9 @@ workflow VIRAL_VARIANT {
   mergedInMapping = readsBatchTag.combine(bwtIdxBatchTag, by: 0)
   BOWTIE2(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
 
-  rawSAM = BOWTIE2.out.sam
+  rawSAM = BOWTIE2.out
   SAM_BAM_SORT_IDX(rawSAM)
-  sortedBAM = SAM_BAM_SORT_IDX.out.bam
+  sortedBAM = SAM_BAM_SORT_IDX.out
 
 
   // for later: mark duplicate
