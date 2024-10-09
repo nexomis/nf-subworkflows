@@ -9,7 +9,7 @@ include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
 include { ABRA2 } from '../../process/abra2/main.nf'
 include { IVAR_VARIANTS_ALL } from '../../process/ivar/variants/main.nf'
-include { FILTER_REGROUP_IVAR_VARIANTS } from 'process/filter_regroup_ivar_variants/main.nf'
+include { FILTER_REGROUP_IVAR_VARIANTS } from './process/filter_regroup_ivar_variants/main.nf'
 include { checkMeta } from '../utils.nf'
 
 
