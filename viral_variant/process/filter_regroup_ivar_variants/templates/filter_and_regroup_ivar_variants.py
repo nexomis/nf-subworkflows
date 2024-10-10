@@ -74,9 +74,7 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         sample_name = os.path.basename(tsv_file.replace('_raw', '').replace('.tsv', ''))
         ## import and filter
         tsv_df = pd.read_csv(tsv_file, sep='\\t', low_memory=False)     # 'low_memory=False' to avoid the following warning (which seems unfounded): '<stdin>:1: DtypeWarning: Columns (3,13,14,15,16,17,18) have mixed types. Specify dtype option on import or set low_memory=False.'. But it may have a significant impact on memory in the case of large genomes.
-        print ("1111111111", tsv_df)
         filtered_df = tsv_df[tsv_df.apply(lambda row: (row['REGION'], row['POS']) in positions_set, axis=1)]
-        print ("2222222222", filtered_df)
 
         # complete missing 'TOTAP_DP' about short_mpileup_dict
         if sample_name in short_mpileup_dict:
@@ -86,7 +84,6 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
             filtered_df.drop(columns=['TOTAL_DP_mpileup'], inplace=True)
         else:
             print(f"WARNING: no short_mpileup_cov file: '{sample_name}' ('TAOTAL_DP' not added for stable position).")
-        print ("33333333333", filtered_df)
 
         # save in specific file complete filtered sample tsv
         filtered_output_path = os.path.join(output_dir, f"{sample_name}_batchFiltered.tsv")
