@@ -191,5 +191,6 @@ workflow VIRAL_VARIANT {
   psa_algn = TRANSFERT_GFF.out.psa                         //
   psa_genomic_coords = TRANSFERT_GFF.out.genomic_coords    //
   flagstat = SAM_BAM_SORT_IDX.out.flagstat
+  aln_bam = realignedBAM
 }
 
