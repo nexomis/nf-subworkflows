@@ -1,4 +1,5 @@
 include { MINIPROT } from '../../process/miniprot/main.nf'
+include { checkMeta } from '../utils.nf'
 
 process RENAME_PROT {
   container "python:3.10"
@@ -7,10 +8,10 @@ process RENAME_PROT {
   label 'mem_2G'
 
   input:
-  tuple val(name), path(prot_fasta, arity: 1, stageAs: "inputs/*")
+  tuple val(meta), path(prot_fasta, arity: 1, stageAs: "inputs/*")
 
   output:
-  tuple val(name), path("${name}.fa")
+  tuple val(meta), path("${meta.id}.fa")
 
   script:
   """
@@ -21,7 +22,7 @@ process RENAME_PROT {
   with open("${prot_fasta}", "r") as in_file:
     for line in in_file.readlines():
       if line.startswith(">"):
-        match = re.match("${params.regex_prot_name ?: '^>.*GN=([^ ]+).*\$'}", line)
+        match = re.match("${meta.regex_prot_name}", line)
         name = line.lstrip(">").split()[0]
         if match:
           if len(match.groups()) > 0:
@@ -37,74 +38,79 @@ process RENAME_PROT {
         seq_dict[name] = []
       else: 
         seq_dict[name].append(line)
-  with open("${name}.fa", "w") as ofile:
+  with open("${meta.id}.fa", "w") as ofile:
     for name, seqs in seq_dict.items():
-      ofile.write(f">{name}\\n")
+      ofile.write(f">{name}")
       for seq in seqs:
         ofile.write(seq)
   """
 }
 
-process REVCOMP_SEQ {
+process POST_PROCESS {
   container "ghcr.io/nexomis/pandas:py3.11-2.0.3-1.0"
 
   label 'cpu_x1'
   label 'mem_2G'
 
   input:
-  tuple val(name_genome), path(genome_fasta, arity: 1, stageAs: "input_genome/*")
-  tuple val(name_annot), path(annot_file, arity: 1, stageAs: "input_annot/*")
+  tuple val(meta_genome), path(genome_fasta, arity: 1, stageAs: "input/genome.fasta")
+  tuple val(meta_annot), path(annot_file, arity: 1, stageAs: "input/annot.gff")
 
   output:
-  tuple val(name_genome), path("${name_genome}.fa"), emit: genome
-  tuple val(name_annot), path("${name_annot}.gff"), emit: annot
+  tuple val(meta_genome), path("${meta_genome.id}.fasta"), emit: genome
+  tuple val(meta_annot), path("${meta_annot.id}.gff"), emit: annot
 
   script:
-  template "revcomp_seq.py"
+  template "post_process.py"
 }
 
 workflow HANNOT {
     take:
     genomeFasta
-    proteinFasta
+    proteinFasta // check id proteinFasta ref_prot / id 
 
     main:
 
-    // take basename if not given
+    def expectedMeta = [
+      "proteome_id": ["String"],
+      "revcomp": ["String"],
+      "filter_annot": ["String"],
+      "retain_only_annot": ["String"]
+    ]
 
-    namedProteinFasta = proteinFasta.map {
-      if (it instanceof Path) {
-        return [it.getBaseName(), it]
-      } else {
-        return it
-      }
-    }
+    def expectedMeta2 = [
+      "regex_prot_name": ["String"]
+    ]
 
-    namedGenomeFasta = genomeFasta.map {
-      if (it instanceof Path) {
-        return [it.getBaseName(), it]
-      } else {
-        return it
-      }
-    }
+    // Validate metadata
+    genomeFasta.map { checkMeta(it, expectedMeta) }
+    proteinFasta.map { checkMeta(it, expectedMeta2) }
 
-    RENAME_PROT(namedProteinFasta)
+    RENAME_PROT(proteinFasta)
     | set {renamedProt}
 
-    MINIPROT(namedGenomeFasta, namedProteinFasta)
+    genomeFasta.map{
+      [it[0].proteome_id, it]
+    }
+    | combine(renamedProt.map{[it[0].id, it]}, by:0)
+    | set {joinInputForMiniprot}
+
+    MINIPROT(joinInputForMiniprot.map{it[1]}, joinInputForMiniprot.map{it[2]})
     | set {annotFile}
 
-    if (params.revcomp_from_annot) {
-      REVCOMP_SEQ(namedGenomeFasta, annotFile)
-      out_genome_file = REVCOMP_SEQ.out.genome
-      out_annot_file = REVCOMP_SEQ.out.annot
-    } else {
-      out_genome_file = namedGenomeFasta
-      out_annot_file = annotFile
+    genomeFasta.map{
+      [it[0].id, it]
     }
+    | combine(annotFile.map{[it[0].id, it]}, by:0)
+    | set {joinPost}
+
+    POST_PROCESS(joinPost.map{it[1]}, joinPost.map{it[2]})
+    out_genome_file = POST_PROCESS.out.genome
+    out_annot_file = POST_PROCESS.out.annot
 
     emit:
     genome = out_genome_file
+    raw_annot = annotFile
     annot = out_annot_file
 
 }
