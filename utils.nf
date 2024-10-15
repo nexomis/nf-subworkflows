@@ -24,4 +24,23 @@ def checkMeta(item, expectedMeta = []) {
             throw new IllegalArgumentException("For item '${meta.id}', metadata key '${key}' is of type '${actualType}', expected '${expectedType}'")
         }
     }
+
+    def checkFiles
+    checkFiles = { value ->
+        if (value == null) {
+        } else if (value instanceof Path || value instanceof File) {
+            if (!value.exists()) {
+                throw new FileNotFoundException("File '${value}' does not exist")
+            }
+        } else if (value instanceof Collection || value.getClass().isArray()) {
+            value.each { v ->
+                checkFiles(v)
+            }
+        }
+    }
+
+    item[1..-1].each { val ->
+        checkFiles(val)
+    }
 }
+
