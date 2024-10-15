@@ -48,7 +48,7 @@ process RENAME_PROT {
 }
 
 process POST_PROCESS {
-  container "ghcr.io/nexomis/pandas:py3.11-2.0.3-1.0"
+  container "quay.io/nexomis/pandas:2.1.4"
 
   label 'cpu_x1'
   label 'mem_2G'
