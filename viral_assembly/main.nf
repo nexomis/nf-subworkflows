@@ -228,9 +228,6 @@ workflow VIRAL_ASSEMBLY {
 
   QUAST(inputForQuast.map{it[0]},inputForQuast.map{it[1]},inputForQuast.map{it[2]})
 
-  QUAST.out.html
-  | view
-
   emit:
   all_aln               = sortedBAM
   all_scaffolds         = finalScaffolds
