@@ -8,7 +8,7 @@ RETAIN_ANNOTATED_CONTIGS = ${ meta_genome.retain_only_annot == "yes" ? "True" : 
 # Input and Output Files
 INPUT_GFF = "input/annot.gff"
 INPUT_FASTA = "input/genome.fasta"
-OUTPUT_GFF = "${meta_annot.id}.gff"
+OUTPUT_GFF = "${meta_annot.label ?: meta_annot.id}.gff"
 OUTPUT_FASTA = "${meta_genome.label ?: meta_genome.id}.fasta"
 
 import pandas as pd
@@ -37,9 +37,9 @@ def filter_gff_annotations(df):
   mRNA_df['AlignmentLength'] = (mRNA_df['TargetEnd'] - mRNA_df['TargetStart']).abs()
   mRNA_df['Score'] = mRNA_df['Identity'] * mRNA_df['AlignmentLength']
   # Resolve duplicates
-  selected_ids_nested = mRNA_df.groupby('Target').apply(resolve_duplicates).reset_index(drop=True).tolist()
+  selected_ids_nested = mRNA_df.groupby('Target').apply(resolve_duplicates).reset_index(drop=True)
   # resolve_duplicates, how to get the flatten list without group info ?
-  selected_ids = [item for sublist in selected_ids_nested for item in sublist]
+  selected_ids = [item for sublist in selected_ids_nested.tolist() for item in sublist]
   filtered_df = df[df['ID'].isin(selected_ids)]
   return filtered_df
 
@@ -115,34 +115,36 @@ def write_fasta(seq_dict, output_fasta):
 
 def write_gff(df, output_gff):
   with open(output_gff, "w") as fh:
-      fh.write("##gff-version 3\\n")
-  df.to_csv(output_gff, sep='\\t', header=False, index=False, mode='a')
+    fh.write("##gff-version 3\\n")
+  if not df.empty:
+    df.to_csv(output_gff, sep='\\t', header=False, index=False, mode='a')
 
 def main():
   # Read GFF file
   df = read_gff(INPUT_GFF)
   
-  # Filter GFF annotations if the option is enabled
-  if FILTER_GFF:
-      df = filter_gff_annotations(df)
-  
   # Read FASTA file
   seq_dict = read_fasta(INPUT_FASTA)
   
-  # Retain only annotated contigs if the option is enabled
-  if RETAIN_ANNOTATED_CONTIGS:
-      seq_dict = retain_annotated_contigs(seq_dict, df)
+  if not df.empty:
+    # Filter GFF annotations if the option is enabled
+    if FILTER_GFF:
+        df = filter_gff_annotations(df)
   
-  # Apply reverse complement if the option is enabled
-  if APPLY_REVCOMP:
-      # Determine which contigs to reverse complement
-      is_minus = determine_reverse_complement_contigs(df)
-      # Reverse complement sequences and get their new lengths
-      revcomp_len, seq_dict = reverse_complement_sequences(seq_dict, is_minus)
-      # Adjust GFF positions
-      df = df.apply(adjust_positions, axis=1, args=(revcomp_len,))
-  else:
-      revcomp_len = {}  # Empty dict if not reversing any sequences
+    # Retain only annotated contigs if the option is enabled
+    if RETAIN_ANNOTATED_CONTIGS:
+        seq_dict = retain_annotated_contigs(seq_dict, df)
+
+    # Apply reverse complement if the option is enabled
+    if APPLY_REVCOMP:
+        # Determine which contigs to reverse complement
+        is_minus = determine_reverse_complement_contigs(df)
+        # Reverse complement sequences and get their new lengths
+        revcomp_len, seq_dict = reverse_complement_sequences(seq_dict, is_minus)
+        # Adjust GFF positions
+        df = df.apply(adjust_positions, axis=1, args=(revcomp_len,))
+    else:
+        revcomp_len = {}  # Empty dict if not reversing any sequences
   
   # Write the modified FASTA file
   write_fasta(seq_dict, OUTPUT_FASTA)

@@ -21,6 +21,7 @@ process RENAME_PROT {
   seq_name_count = dict()
   with open("${prot_fasta}", "r") as in_file:
     for line in in_file.readlines():
+      line = line.rstrip()
       if line.startswith(">"):
         match = re.match("${meta.regex_prot_name}", line)
         name = line.lstrip(">").split()[0]
@@ -40,9 +41,9 @@ process RENAME_PROT {
         seq_dict[name].append(line)
   with open("${meta.id}.fa", "w") as ofile:
     for name, seqs in seq_dict.items():
-      ofile.write(f">{name}")
+      ofile.write(f">{name}\\n")
       for seq in seqs:
-        ofile.write(seq)
+        ofile.write(seq+"\\n")
   """
 }
 
@@ -57,8 +58,8 @@ process POST_PROCESS {
   tuple val(meta_annot), path(annot_file, arity: 1, stageAs: "input/annot.gff")
 
   output:
-  tuple val(meta_genome), path("${meta_genome.id}.fasta"), emit: genome
-  tuple val(meta_annot), path("${meta_annot.id}.gff"), emit: annot
+  tuple val(meta_genome), path("${meta_genome.label ?: meta_genome.id}.fasta"), emit: genome
+  tuple val(meta_annot), path("${meta_annot.label ?: meta_annot.id}.gff"), emit: annot
 
   script:
   template "post_process.py"

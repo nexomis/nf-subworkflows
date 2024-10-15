@@ -10,6 +10,7 @@ include { SPADES } from '../../process/spades/main.nf'
 include { ABACAS } from '../../process/abacas/main.nf'
 include { EMPTY_FILE } from '../../process/empty_file/main.nf'
 include { UNSPRING_READS } from '../unspring_reads/main.nf'
+include { HANNOT } from '../hannot/main.nf'
 include { ITERATIVE_UNCLASSIFIED_READS_EXTRACTION } from '../iterative_unclassified_reads_extraction/main.nf'
 include { checkMeta } from '../utils.nf'
 
@@ -32,6 +33,7 @@ workflow VIRAL_ASSEMBLY {
   inputReads
   inputK2Index
   inputRefGenome
+  protFasta
 
   main:
 
@@ -50,6 +52,7 @@ workflow VIRAL_ASSEMBLY {
   inputReads.map { checkMeta(it, expectedMeta) }
   inputK2Index.map { checkMeta(it) }
   inputRefGenome.map { checkMeta(it) }
+  protFasta.map { checkMeta(it) }
 
   sepRefGenome = inputRefGenome.branch {
     gzip: ["gz","gzip","z"].contains(it[1].getExtension().toLowerCase())
@@ -146,7 +149,7 @@ workflow VIRAL_ASSEMBLY {
 
   ABACAS.out // process to extract the number of 
   | map {
-    def new_meta = it[0]
+    def new_meta = it[0].clone()
     def new_file = nullifyEmptyFasta(it[1])
     return [new_meta, new_file]
   }
@@ -156,10 +159,32 @@ workflow VIRAL_ASSEMBLY {
         it[0].keep_before_abacas == "yes" || it[0].do_abacas != "yes" 
       }
     )
+  | set {afterAbacasScaffolds}
+
+  HANNOT(
+    afterAbacasScaffolds.filter{it[0].proteome_id != ""}.map{
+      new_meta = it[0].clone()
+      new_meta.assembly_id = "${new_meta.assembly_id}_hannot"
+      new_meta.label = "${new_meta.assembly_id}"
+      return [new_meta, it[1]]
+    }, protFasta)
+
+  HANNOT.out.genome
+  | map {
+    def new_meta = it[0].clone()
+    def new_file = nullifyEmptyFasta(it[1])
+    return [new_meta, new_file]
+  }
+  | filter { it[1] } // remove empty
+  | concat(
+      afterAbacasScaffolds.filter{
+        it[0].keep_before_hannot == "yes" || it[0].proteome_id == "" 
+      }
+    )
   | set {finalScaffolds}
 
   // mapping (with index building and bam sorting)
-
+  
   finalScaffolds
   | filter { it[0].realign == "yes" }
   | set { toRealignScaffolds }
@@ -172,7 +197,7 @@ workflow VIRAL_ASSEMBLY {
   | combine(bwtIdx.map {[it[0].id, it]}, by:0) // merge with id (not dedup)
   | map {[[it[2][0], it[1][1]], it[2]]}
   | map {
-      def new_meta = it[0][0]
+      def new_meta = it[0][0].clone()
       new_meta.label = "${new_meta.assembly_id}"
       return [[new_meta, it[0][1]], it[1]]
   }
@@ -230,9 +255,13 @@ workflow VIRAL_ASSEMBLY {
 
   emit:
   all_aln               = sortedBAM
+  cleaned_reads         = inputReadsUnclassified
   all_scaffolds         = finalScaffolds
+  hannot_raw            = HANNOT.out.raw_annot
+  hannot_filtered       = HANNOT.out.annot
   pre_abacas_scaffolds  = scaffolds
   post_abacas_scaffolds = ABACAS.out
+  post_hannot_scaffolds = HANNOT.out.genome
   quast_dir             = QUAST.out.dir
   quast_html            = QUAST.out.html
   quast_tsv             = QUAST.out.tsv
