@@ -64,19 +64,21 @@ workflow VIRAL_ASSEMBLY {
   UNSPRING_READS.out
   | map {
     new_meta = it[0].clone()
-    new_meta.initial_id = new_meta.id
+    new_meta.reads_id = "${new_meta.id}" // reads id definitoin
+    new_meta.assembly_id = "${new_meta.reads_id}" // Assembly ID definition
     return [new_meta, it[1]]
   }
   | set { allFastq }
 
-  // START Remove Duplicates Before Assembly
+  // Start Remove Duplicates Before Assembly
 
   inputReadsUnclassified = ITERATIVE_UNCLASSIFIED_READS_EXTRACTION(allFastq, inputK2Index)
 
   inputReadsUnclassified.filter{ it[0].dedup == "yes" }
   | map { 
     new_meta = it[0].clone()
-    new_meta.id = new_meta.id + "_dedup"
+    new_meta.reads_id = "${new_meta.reads_id}_dedup"
+    new_meta.assembly_id = "${new_meta.reads_id}"
     return [new_meta, it[1]]
   }
   | set { readsForDedup }
@@ -86,10 +88,10 @@ workflow VIRAL_ASSEMBLY {
   inputReadsUnclassified.filter{ 
   (it[0].dedup == "no") || ((it[0].dedup == "yes") && (it[0].keep_before_dedup == "yes"))
   }
-  | set { readsToKeep }
+  | set { notDedupReadsToKeep }
 
-  mergedForAssembly = readsToKeep.concat(dedupReads)
-  mergedForMapping = readsToKeep.concat(readsForDedup)
+  mergedForAssembly = notDedupReadsToKeep.concat(dedupReads)
+  mergedForMapping = notDedupReadsToKeep.concat(readsForDedup) // dedup reads only for assembly
 
   // END Remove Duplicates Before Assembly
 
@@ -108,7 +110,8 @@ workflow VIRAL_ASSEMBLY {
       spades: (it[0].assembler.startsWith("spades_"))
         def new_meta = it[0].clone()
         new_meta.args_spades = "${new_meta.assembler}".replace("spades_", "--")
-        new_meta.label = "${new_meta.id}_${new_meta.assembler}"
+        new_meta.assembly_id = "${new_meta.assembly_id}_${new_meta.assembler}"
+        new_meta.label = "${new_meta.assembly_id}"
         return [new_meta, it[1]]
       no_assembly: true
     }
@@ -119,7 +122,7 @@ workflow VIRAL_ASSEMBLY {
   SPADES.out.scaffolds
   | map {
     def new_file = nullifyEmptyFasta(it[1])
-    return [it[0], new_file]  
+    return [it[0].clone(), new_file] 
   }
   | filter { it[1] }
   | set { scaffolds }
@@ -131,7 +134,8 @@ workflow VIRAL_ASSEMBLY {
   | combine(faRefGenome.map {[it[0].id, it]}, by:0)
   | map {
       def new_meta = it[1][0].clone()
-      new_meta.label = "${new_meta.id}_${new_meta.assembler}_abacas"
+      new_meta.assembly_id = "${new_meta.assembly_id}_abacas"
+      new_meta.label = "${new_meta.assembly_id}"
       return [it[0], [new_meta, it[1][1]], it[2]]
   }
   | set { joinInputForAbacas }
@@ -143,20 +147,15 @@ workflow VIRAL_ASSEMBLY {
   ABACAS.out // process to extract the number of 
   | map {
     def new_meta = it[0]
-    if (new_meta.keep_before_abacas == "yes") {
-      new_meta.assembler_with_abacas = "${new_meta.assembler}_abacas"
-    }
     def new_file = nullifyEmptyFasta(it[1])
     return [new_meta, new_file]
   }
-  | filter { it[1] }
-  | concat(scaffolds.map{ 
-      def new_meta = it[0].clone()
-      new_meta.assembler_with_abacas = "${new_meta.assembler}"
-      return [new_meta, it[1]]
-    }
-  )
-  | unique { it[0].id + it[0].assembler_with_abacas }
+  | filter { it[1] } // remove empty abacas
+  | concat(
+      scaffolds.filter{ 
+        it[0].keep_before_abacas == "yes" || it[0].do_abacas != "yes" 
+      }
+    )
   | set {finalScaffolds}
 
   // mapping (with index building and bam sorting)
@@ -170,11 +169,11 @@ workflow VIRAL_ASSEMBLY {
   | set { bwtIdx }
 
   mergedForMapping.map {[it[0].id, it]}
-  | combine(bwtIdx.map {[it[0].id, it]}, by:0)
+  | combine(bwtIdx.map {[it[0].id, it]}, by:0) // merge with id (not dedup)
   | map {[[it[2][0], it[1][1]], it[2]]}
   | map {
       def new_meta = it[0][0]
-      new_meta.label = "${new_meta.id}_${new_meta.assembler_with_abacas}"
+      new_meta.label = "${new_meta.assembly_id}"
       return [[new_meta, it[0][1]], it[1]]
   }
   | set {joinInputforBt2}
@@ -183,14 +182,13 @@ workflow VIRAL_ASSEMBLY {
 
   rawSAM = BOWTIE2.out
   SAM_BAM_SORT_IDX(rawSAM)
-  SAM_BAM_SORT_IDX.out
-  | set { sortedBAM }
+  sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
 
   emptyFile = EMPTY_FILE()
 
   refWithEmpty = faRefGenome.concat(emptyFile).map {[it[0].id, it]}
   bamWithEmpty = sortedBAM
-  | map {["${it[0].id}:${it[0].assembler_with_abacas}", it]}
+  | map {["${it[0].assembly_id}", it]}
   | concat(emptyFile.map {[it[0].id, [it[0], it[1], it[1]]]})
 
   finalScaffolds
@@ -198,13 +196,13 @@ workflow VIRAL_ASSEMBLY {
   | combine(refWithEmpty, by:0)
   | map {
     if (it[1][0].realign == "yes") {
-      return ["${it[1][0].id}:${it[1][0].assembler_with_abacas}", it[1], it[2]]
+      return ["${it[1][0].assembly_id}", it[1], it[2]]
     } else {
       return ["empty_file", it[1], it[2]]
     }
   }
   | combine(bamWithEmpty, by:0)
-  | map {[it[1][0].initial_id, it[1], it[2], it[3]]}
+  | map {[it[1][0].id, it[1], it[2], it[3]]}
   | groupTuple()
   | map {
     def ids = []
@@ -212,7 +210,7 @@ workflow VIRAL_ASSEMBLY {
     def bams = []
     def bais = []
     it[1].each{ item ->
-      ids << item[0].id + "_" + item[0].assembler_with_abacas
+      ids << item[0].assembly_id
       assemblies << item[1]
     }
     it[3].each{ item ->
@@ -229,6 +227,9 @@ workflow VIRAL_ASSEMBLY {
   | set {inputForQuast}
 
   QUAST(inputForQuast.map{it[0]},inputForQuast.map{it[1]},inputForQuast.map{it[2]})
+
+  QUAST.out.html
+  | view
 
   emit:
   all_aln               = sortedBAM
