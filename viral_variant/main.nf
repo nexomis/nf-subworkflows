@@ -171,6 +171,7 @@ workflow VIRAL_VARIANT {
 
   // add 'IVAR_VARIANTS_ALL.out.mpileup_cov' as input of 'FILTER_REGROUP_IVAR_VARIANTS' to fill the blanks REF_DP at unvaribale position/sample
   summaryVarByBatch = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs
+  summaryVarByBatchLgFrmt = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs_long_frmt
 
 
   // for upcoming version: in option (at batch level when 'inAnnot' !) edit coord in batch_summary_all_iSNVs (and individual file ?): g.inAnnot -> g.inRefCoord and g.inRefCoord -> c.inRefCoord
@@ -183,6 +184,7 @@ workflow VIRAL_VARIANT {
 
   emit:   // conserve meta in emit ??
   summary_var_by_batch = summaryVarByBatch
+  summary_var_by_batch_long_frmt = summaryVarByBatchLgFrmt
   var_batch_filtered = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_batch_filtered_all_iSNVs             //
   var_by_smpl_filtered = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_filtered_all_iSNVs
   var_by_smpl_corrected = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_corrected_all_iSNVs        

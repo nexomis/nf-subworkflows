@@ -6,7 +6,7 @@ import os
 
 
 
-## Amend/Correct TOTAL_DP and ALT_FREQ from ivar for position with indels
+## Amend/Correct TOTAL_DP and ALT_FREQ from ivar for position with indels + isole gene in specific column if present in 'GFF_FEATURE' columns
 def correct_variant_tsv(tsv_file):
     df = pd.read_csv(tsv_file, sep='\\t')
 
@@ -28,7 +28,11 @@ def correct_variant_tsv(tsv_file):
             corrected_ref_dp_rv = total_dp_rv - total_alt_dp_rv
             df.loc[group.index, 'REF_RV'] = corrected_ref_dp_rv
     
-    # save file    
+    # isole "GENE" in specific column
+    df[['GENE', 'GFF_ID']] = df['GFF_FEATURE'].apply(lambda x: pd.Series(x.split(':')) if isinstance(x, str) and ':' in x else pd.Series([None, x]))
+    df = df.drop(columns=['GFF_FEATURE'])
+
+    # save file
     output_file = os.path.basename(tsv_file.replace('_raw', '').replace('.tsv', '')) + '_corrected.tsv'
     df.to_csv(output_file, sep='\\t', index=False)
 
@@ -68,10 +72,11 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     
     output_dir = out_prefix + "_batchFiltered"
     os.makedirs(output_dir)
-    common_columns = ['REGION', 'POS', 'REF', 'ALT', 'GFF_FEATURE', 'REF_CODON', 'REF_AA', 'ALT_CODON', 'ALT_AA', 'POS_AA']
-    all_samples_filtered = []
+    common_columns = ['REGION', 'POS', 'REF', 'ALT', 'GENE', 'GFF_ID', 'REF_CODON', 'REF_AA', 'ALT_CODON', 'ALT_AA', 'POS_AA']
+    all_samples_filtered_long_frmt = []
+    all_samples_filtered_frmt_multi_cols = []
     for tsv_file in tsv_files:
-        sample_name = os.path.basename(tsv_file.replace('_raw', '').replace('.tsv', ''))
+        sample_name = os.path.basename(tsv_file.replace('_corrected', '').replace('.tsv', ''))
         ## import and filter
         tsv_df = pd.read_csv(tsv_file, sep='\\t', low_memory=False)     # 'low_memory=False' to avoid the following warning (which seems unfounded): '<stdin>:1: DtypeWarning: Columns (3,13,14,15,16,17,18) have mixed types. Specify dtype option on import or set low_memory=False.'. But it may have a significant impact on memory in the case of large genomes.
         filtered_df = tsv_df[tsv_df.apply(lambda row: (row['REGION'], row['POS']) in positions_set, axis=1)]
@@ -89,19 +94,29 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         filtered_output_path = os.path.join(output_dir, f"{sample_name}_batchFiltered.tsv")
         filtered_df.to_csv(filtered_output_path, sep='\\t', index=False)
         
-        # reordone and rename specific columns using sample_name and append to list of df to merge
+        # long format
+        filtered_df_long_format = filtered_df
+        filtered_df_long_format["SAMPLE"] = sample_name
+        all_samples_filtered_long_frmt.append(filtered_df)
+
+        # multi col by sample format: reordone and rename specific columns using sample_name and append to list of df to merge
         variable_columns = [col for col in tsv_df.columns if col not in common_columns]
         filtered_df = filtered_df[common_columns + variable_columns]
-        renamed_columns = {col: f"{col}({sample_name})" for col in variable_columns}
+        renamed_columns = {col: f"{col}_{sample_name}" for col in variable_columns}
         filtered_df = filtered_df.rename(columns=renamed_columns)
-        all_samples_filtered.append(filtered_df)
+        all_samples_filtered_frmt_multi_cols.append(filtered_df)
 
-    # export filtered df of all sample on one unique file
-    global_output_file = out_prefix + "_summary_all_iSNVs.tsv"
-    global_df = all_samples_filtered[0]
-    for df in all_samples_filtered[1:]:
+    ## export filtered df of all sample on one unique file
+    # multi col by sample format
+    global_output_file_frmt_multi_cols = out_prefix + "_summary_all_iSNVs.tsv"
+    global_df = all_samples_filtered_frmt_multi_cols[0]
+    for df in all_samples_filtered_frmt_multi_cols[1:]:
         global_df = pd.merge(global_df, df, on=common_columns, how='outer')
-    global_df.to_csv(global_output_file, sep='\\t', index=False)
+    global_df.to_csv(global_output_file_frmt_multi_cols, sep='\\t', index=False)
+    # long format
+    filtered_long_frmt= pd.concat(all_samples_filtered_long_frmt, ignore_index=True)
+    global_output_file_frmt_long = out_prefix + "_summary_all_iSNVs_long_format.tsv"
+    filtered_long_frmt.to_csv(global_output_file_frmt_long, sep='\\t', index=False)
 
     # TODO: for each pos in global_df, for each smpl, increade value of REF_DP, ALT_DP, ALT_FREQ and TOAL_DP using dictionay constructed about mpileup result.
 
