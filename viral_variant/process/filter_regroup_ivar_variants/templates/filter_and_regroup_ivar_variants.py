@@ -68,7 +68,7 @@ def read_short_mpileup(short_mpileup_files):
 def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_prefix):
     # import interest positions
     positions_df = pd.read_csv(csv_positions, sep='\\t')
-    positions_set = set(zip(positions_df['REGION'], positions_df['POS']))
+    positions_set = set(zip(positions_df['REGION'], positions_df['POS'], positions_df['REF']))
     
     output_dir = out_prefix + "_batchFiltered"
     os.makedirs(output_dir)
@@ -77,9 +77,13 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     all_samples_filtered_frmt_multi_cols = []
     for tsv_file in tsv_files:
         sample_name = os.path.basename(tsv_file.replace('_corrected', '').replace('.tsv', ''))
-        ## import and filter
+        # import raw data
         tsv_df = pd.read_csv(tsv_file, sep='\\t', low_memory=False)     # 'low_memory=False' to avoid the following warning (which seems unfounded): '<stdin>:1: DtypeWarning: Columns (3,13,14,15,16,17,18) have mixed types. Specify dtype option on import or set low_memory=False.'. But it may have a significant impact on memory in the case of large genomes.
-        filtered_df = tsv_df[tsv_df.apply(lambda row: (row['REGION'], row['POS']) in positions_set, axis=1)]
+        # keep only pos of interest (possibly multiple line for each position of interest: keep all)
+        filtered_df = tsv_df[tsv_df.apply(lambda row: (row['REGION'], row['POS'], row['REF']) in positions_set, axis=1)]
+        # add missing position and sort
+        filtered_df = positions_df.merge(filtered_df, on=['REGION', 'POS', 'REF'], how='left')
+        filtered_df = filtered_df.sort_values(by=['REGION', 'POS', 'REF']).reset_index(drop=True)
 
         # complete missing 'TOTAP_DP' about short_mpileup_dict
         if sample_name in short_mpileup_dict:
@@ -97,7 +101,7 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         # long format
         filtered_df_long_format = filtered_df
         filtered_df_long_format["SAMPLE"] = sample_name
-        all_samples_filtered_long_frmt.append(filtered_df)
+        all_samples_filtered_long_frmt.append(filtered_df_long_format)
 
         # multi col by sample format: reordone and rename specific columns using sample_name and append to list of df to merge
         variable_columns = [col for col in tsv_df.columns if col not in common_columns]
@@ -134,7 +138,7 @@ def correct_and_filter_ivar_variant():
         filtered_df = filter_variant_tsv(corrected_df, min_dp, ref_dp_ratio_max)
         output_file = os.path.basename(tsv_file.replace('_raw', '').replace('.tsv', '')) + '_filtered.tsv'
         filtered_df.to_csv(output_file, sep='\\t', index=False)
-        all_filtered_pos.append(filtered_df[['REGION', 'POS']])
+        all_filtered_pos.append(filtered_df[['REGION', 'POS', 'REF']])
 
     summarize_pos(all_filtered_pos, out_prefix)
 
