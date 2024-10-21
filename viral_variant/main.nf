@@ -7,6 +7,7 @@ include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-
 include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
 include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
+include { PICARD_MARK_DUPLICATES } from '../../process/picard_tools/markduplicates/main.nf'
 include { ABRA2 } from '../../process/abra2/main.nf'
 include { IVAR_VARIANTS_ALL } from '../../process/ivar/variants/main.nf'
 include { FILTER_REGROUP_IVAR_VARIANTS } from './process/filter_regroup_ivar_variants/main.nf'
@@ -118,13 +119,17 @@ workflow VIRAL_VARIANT {
   sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
 
 
-  // for upcoming version: mark duplicate
+  // remove/mark duplicates
+  bamBatchTag = sortedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // exclu '.bai' (not useful for markduplcates)
+  refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
+  mergedInMarkDup = bamBatchTag.combine(refBatchTag, by: 0)
 
+  PICARD_MARK_DUPLICATES( mergedInMarkDup.map{ it[1] }, mergedInMarkDup.map{ it[2] })
+  deDupBAM = PICARD_MARK_DUPLICATES.out.bam_bai
 
   // indel realignment (include sort/index): Ideally, do it at batch level ?
-  bamBatchTag = sortedBAM.map { [ it[0].batch_id, it ] }
-  refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
-  mergedInAbra2 = bamBatchTag.combine(refBatchTag, by: 0)
+  bamDeDupBatchTag = deDupBAM.map { [ it[0].batch_id, it ] }
+  mergedInAbra2 = bamDeDupBatchTag.combine(refBatchTag, by: 0)
 
   ABRA2( mergedInAbra2.map{ it[1] }, mergedInAbra2.map{ it[2] })
   realignedBAM = ABRA2.out.bam
@@ -180,7 +185,7 @@ workflow VIRAL_VARIANT {
 
 
   // for upcoming version: plots QC and results (cf. entourage: 'https://codeberg.org/CENMIG/entourage/src/branch/v1.0/example%20results')
-  // (% and nb reads mapped, alignement score, % bases assigned, cov of each smpl by batch, % base covered, % variable base uncovered on at least one smpl (by batch), indel warning)
+  // (% and nb reads mapped, % duplicates, alignement score, % bases assigned, cov of each smpl by batch, % base covered, % variable base uncovered on at least one smpl (by batch), indel warning)
 
 
   emit:   // conserve meta in emit ??
