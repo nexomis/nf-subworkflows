@@ -74,8 +74,10 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     output_dir = out_prefix + "_batchFiltered"
     os.makedirs(output_dir)
     common_columns = ['REGION', 'POS', 'REF', 'ALT', 'GENE', 'GFF_ID', 'REF_CODON', 'REF_AA', 'ALT_CODON', 'ALT_AA', 'POS_AA']
+    light_variable_columns = ['ALT_FREQ', 'TOTAL_DEPTH']
     all_samples_filtered_long_frmt = []
     all_samples_filtered_frmt_multi_cols = []
+    all_samples_filtered_frmt_multi_cols_light = []
     for tsv_file in tsv_files:
         sample_name = os.path.basename(tsv_file.replace('_corrected', '').replace('.tsv', ''))
         # import raw data
@@ -98,7 +100,8 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         # save in specific file complete filtered sample tsv
         filtered_output_path = os.path.join(output_dir, f"{sample_name}_batchFiltered.tsv")
         filtered_df.to_csv(filtered_output_path, sep='\\t', index=False)
-        
+        filtered_df_light = filtered_df
+
         # long format
         filtered_df_long_format = filtered_df
         filtered_df_long_format["SAMPLE"] = sample_name
@@ -111,6 +114,13 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         filtered_df = filtered_df.rename(columns=renamed_columns)
         all_samples_filtered_frmt_multi_cols.append(filtered_df)
 
+        # multi col by sample format LIGHT: reordone and rename specific columns using sample_name and append to list of df to merge
+        # HOT_fix, need to be refactorise (select column out of this loop or a least write specific function !)
+        filtered_df_light = filtered_df_light[common_columns + light_variable_columns]
+        renamed_columns = {col: f"{col}_{sample_name}" for col in light_variable_columns}
+        filtered_df_light = filtered_df_light.rename(columns=renamed_columns)
+        all_samples_filtered_frmt_multi_cols_light.append(filtered_df_light)
+
     ## export filtered df of all sample on one unique file
     # multi col by sample format
     global_output_file_frmt_multi_cols = out_prefix + "_summary_all_iSNVs.tsv"
@@ -118,12 +128,17 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     for df in all_samples_filtered_frmt_multi_cols[1:]:
         global_df = pd.merge(global_df, df, on=common_columns, how='outer')
     global_df.to_csv(global_output_file_frmt_multi_cols, sep='\\t', index=False)
+    # multi col by sample format LIGHT
+    # HOT_fix, need to be refactorise (select column out of this loop or a least write specific function !)
+    global_output_file_frmt_multi_cols_light = out_prefix + "_summary_all_iSNVs_light.tsv"
+    global_df_light = all_samples_filtered_frmt_multi_cols_light[0]
+    for df in all_samples_filtered_frmt_multi_cols_light[1:]:
+        global_df_light = pd.merge(global_df, df, on=common_columns, how='outer')
+    global_df_light.to_csv(global_output_file_frmt_multi_cols, sep='\\t', index=False)
     # long format
     filtered_long_frmt= pd.concat(all_samples_filtered_long_frmt, ignore_index=True)
     global_output_file_frmt_long = out_prefix + "_summary_all_iSNVs_long_format.tsv"
     filtered_long_frmt.to_csv(global_output_file_frmt_long, sep='\\t', index=False)
-
-    # TODO: for each pos in global_df, for each smpl, increade value of REF_DP, ALT_DP, ALT_FREQ and TOAL_DP using dictionay constructed about mpileup result.
 
 
 

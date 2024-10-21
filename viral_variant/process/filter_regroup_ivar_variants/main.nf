@@ -10,6 +10,7 @@ process FILTER_REGROUP_IVAR_VARIANTS {
   tuple val(meta), path("*_corrected.tsv", type: 'file') , optional:false ,  emit: smpl_corrected_all_iSNVs
   tuple val(meta), path("*_filtered.tsv", type: 'file') , optional:false ,  emit: smpl_filtered_all_iSNVs
   tuple val(meta), path("${meta.label ?: meta.id}_summary_all_iSNVs.tsv", type: 'file') , optional:false ,  emit: batch_summary_all_iSNVs
+  tuple val(meta), path("${meta.label ?: meta.id}_summary_all_iSNVs_light.tsv", type: 'file') , optional:false ,  emit: batch_summary_all_iSNVs_light
   tuple val(meta), path("${meta.label ?: meta.id}_summary_all_iSNVs_long_format.tsv", type: 'file') , optional:false ,  emit: batch_summary_all_iSNVs_long_frmt
   tuple val(meta), path("${meta.label ?: meta.id}_batchFiltered", type: 'dir') , optional:false ,  emit: smpl_batch_filtered_all_iSNVs
 
