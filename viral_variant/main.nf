@@ -192,13 +192,8 @@ workflow VIRAL_VARIANT {
   summary_var_by_batch = summaryVarByBatch
   summary_var_by_batch_light = summaryVarByBatchLight
   summary_var_by_batch_long_frmt = summaryVarByBatchLgFrmt
-  var_batch_filtered = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_batch_filtered_all_iSNVs             //
-  var_by_smpl_filtered = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_filtered_all_iSNVs
-  var_by_smpl_corrected = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_corrected_all_iSNVs        
-  subset_mpileup_cov_by_smpl = mpileupCovBySmpl     //
   transfered_gff = refWithTransferedAnnot.map { it[1][1] }
-  psa_algn = TRANSFERT_GFF.out.psa                         //
-  psa_genomic_coords = TRANSFERT_GFF.out.genomic_coords    //
+  psa_algn = TRANSFERT_GFF.out.psa
   flagstat = SAM_BAM_SORT_IDX.out.flagstat
   aln_bam = realignedBAM
 }
