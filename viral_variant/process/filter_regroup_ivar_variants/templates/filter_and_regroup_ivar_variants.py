@@ -74,7 +74,7 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     output_dir = out_prefix + "_batchFiltered"
     os.makedirs(output_dir)
     common_columns = ['REGION', 'POS', 'REF', 'ALT', 'GENE', 'GFF_ID', 'REF_CODON', 'REF_AA', 'ALT_CODON', 'ALT_AA', 'POS_AA']
-    light_variable_columns = ['ALT_FREQ', 'TOTAL_DEPTH']
+    light_variable_columns = ['ALT_FREQ', 'TOTAL_DP']
     all_samples_filtered_long_frmt = []
     all_samples_filtered_frmt_multi_cols = []
     all_samples_filtered_frmt_multi_cols_light = []
@@ -133,8 +133,8 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     global_output_file_frmt_multi_cols_light = out_prefix + "_summary_all_iSNVs_light.tsv"
     global_df_light = all_samples_filtered_frmt_multi_cols_light[0]
     for df in all_samples_filtered_frmt_multi_cols_light[1:]:
-        global_df_light = pd.merge(global_df, df, on=common_columns, how='outer')
-    global_df_light.to_csv(global_output_file_frmt_multi_cols, sep='\\t', index=False)
+        global_df_light = pd.merge(global_df_light, df, on=common_columns, how='outer')
+    global_df_light.to_csv(global_output_file_frmt_multi_cols_light, sep='\\t', index=False)
     # long format
     filtered_long_frmt= pd.concat(all_samples_filtered_long_frmt, ignore_index=True)
     global_output_file_frmt_long = out_prefix + "_summary_all_iSNVs_long_format.tsv"
