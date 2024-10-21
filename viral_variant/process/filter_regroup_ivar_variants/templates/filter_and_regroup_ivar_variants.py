@@ -40,9 +40,10 @@ def correct_variant_tsv(tsv_file):
 
 
 
-def filter_variant_tsv(df, min_dp, ref_dp_ratio_max):
-    filtered_df = df[(df['TOTAL_DP'] > min_dp) & 
-                     (df['REF_DP'] / df['TOTAL_DP'] < ref_dp_ratio_max)]    
+def filter_variant_tsv(df, min_dp, ref_dp_ratio_max, alt_dp_ratio_min):
+    filtered_df = df[(df['TOTAL_DP'] >= min_dp) & 
+                     (df['REF_DP'] / df['TOTAL_DP'] < ref_dp_ratio_max) &
+                     (df['ALT_DP'] / df['TOTAL_DP'] >= alt_dp_ratio_min) ]    
     return filtered_df
 
 
@@ -131,11 +132,12 @@ def correct_and_filter_ivar_variant():
     out_prefix = "${out_prefix}"
     min_dp = ${min_dp}
     ref_dp_ratio_max = ${ref_dp_ratio_max}
+    alt_dp_ratio_min = ${alt_dp_ratio_min}
 
     all_filtered_pos = []
     for tsv_file in tsv_files:
         corrected_df = correct_variant_tsv(tsv_file)
-        filtered_df = filter_variant_tsv(corrected_df, min_dp, ref_dp_ratio_max)
+        filtered_df = filter_variant_tsv(corrected_df, min_dp, ref_dp_ratio_max, alt_dp_ratio_min)
         output_file = os.path.basename(tsv_file.replace('_raw', '').replace('.tsv', '')) + '_filtered.tsv'
         filtered_df.to_csv(output_file, sep='\\t', index=False)
         all_filtered_pos.append(filtered_df[['REGION', 'POS', 'REF']])
