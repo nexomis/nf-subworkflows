@@ -72,19 +72,19 @@ def reorder_common_columns(df):
         ref_aa = row['REF_AA']
         pos_aa = row['POS_AA']
         alt_aa = row['ALT_AA']
-        if ref_aa == '' and pos_aa == '' and alt_aa == '':
-            return ''
-        elif ref_aa == '' or alt_aa == '' or pos_aa == '':
+        if pd.isna(ref_aa) and pd.isna(pos_aa) and pd.isna(alt_aa):
+            return np.nan
+        elif pd.isna(ref_aa) or pd.isna(alt_aa) or pd.isna(pos_aa):
             return 'WARN'
         else:
-            return f"{ref_aa}{pos_aa}{alt_aa}"
+            return f"{ref_aa}{int(pos_aa)}{alt_aa}"
             
     def is_synonym(row):
         ref_aa = row['REF_AA']
         alt_aa = row['ALT_AA']
-        if ref_aa == '' and alt_aa == '':
-            return ''
-        elif ref_aa == '' or alt_aa == '':
+        if pd.isna(ref_aa) and pd.isna(alt_aa):
+            return np.nan
+        elif pd.isna(ref_aa) or pd.isna(alt_aa):
             return 'WARN'
         elif ref_aa == alt_aa:
             return 'true'
@@ -93,8 +93,6 @@ def reorder_common_columns(df):
             
     def is_indel(row):
         alt = row['ALT']
-        print(f">>>>{alt}")
-        print(f":::{row}")
         if pd.isna(alt):
             return np.nan
         elif len(alt) == 1:
