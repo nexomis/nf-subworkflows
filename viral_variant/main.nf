@@ -4,9 +4,12 @@ nextflow.preview.output = true
 
 // include - process
 include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
+include { BWA_INDEX } from '../../process/bwa/index/main.nf'
 include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
+include { BWA_MEM } from '../../process/bwa/mem/main.nf'
 include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
+include { PICARD_MARK_DUPLICATES } from '../../process/picard_tools/markduplicates/main.nf'
 include { ABRA2 } from '../../process/abra2/main.nf'
 include { IVAR_VARIANTS_ALL } from '../../process/ivar/variants/main.nf'
 include { FILTER_REGROUP_IVAR_VARIANTS } from './process/filter_regroup_ivar_variants/main.nf'
@@ -19,8 +22,8 @@ workflow VIRAL_VARIANT {
   take:
   inReads   // (meta, [fq_r1, {fq_r2}]): meta.id (sample_id), meta.batch_id, meta.rank_in_batch
   inRef     // (meta_ref, [inRef_fa, {inRef_gff}]): meta.id (correspond to batch_id)
-  inAnnot  // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (correspond to batch_id)
-
+  inAnnot   // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (correspond to batch_id)
+  mapper    // available otpion: "bowtie2" or "bwa-mem"
 
   main:
   
@@ -105,26 +108,43 @@ workflow VIRAL_VARIANT {
   // for upcoming version: reads correction (already performed in spades?): really useful ?
 
   // mapping (with index building and bam sorting)
-  BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
-  bwtIdx = BOWTIE2_BUILD.out.idx
-
   readsBatchTag = inReads.map { [ it[0].batch_id, it ] }
-  bwtIdxBatchTag = bwtIdx.map { [ it[0].id, it ] }
-  mergedInMapping = readsBatchTag.combine(bwtIdxBatchTag, by: 0)
-  BOWTIE2(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
+  
+  if ( mapper == "bowtie2" ) {
+    BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
+    bwtIdx = BOWTIE2_BUILD.out.idx
 
-  rawSAM = BOWTIE2.out
+    bwtIdxBatchTag = bwtIdx.map { [ it[0].id, it ] }
+    mergedInMapping = readsBatchTag.combine(bwtIdxBatchTag, by: 0)
+    BOWTIE2(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
+    rawSAM = BOWTIE2.out
+  } else if ( mapper == "bwa-mem" ) {
+    BWA_INDEX(inRef.map { [ it[0], it[1][0] ] })
+    bwaIdx = BWA_INDEX.out.idx
+
+    bwaIdxBatchTag = bwaIdx.map { [ it[0].id, it ] }
+    mergedInMapping = readsBatchTag.combine(bwaIdxBatchTag, by: 0)
+    BWA_MEM(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
+    rawSAM = BWA_MEM.out
+  } else {
+    error "Invalid values for mapper: '${mapper}' (supported: 'bowtie2', 'bwa-mem')"
+  }
+
   SAM_BAM_SORT_IDX(rawSAM)
   sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
 
 
-  // for upcoming version: mark duplicate
+  // remove/mark duplicates
+  bamBatchTag = sortedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // exclu '.bai' (not useful for markduplcates)
+  refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
+  mergedInMarkDup = bamBatchTag.combine(refBatchTag, by: 0)
 
+  PICARD_MARK_DUPLICATES( mergedInMarkDup.map{ it[1] }, mergedInMarkDup.map{ it[2] })
+  deDupBAM = PICARD_MARK_DUPLICATES.out.bam_bai
 
   // indel realignment (include sort/index): Ideally, do it at batch level ?
-  bamBatchTag = sortedBAM.map { [ it[0].batch_id, it ] }
-  refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
-  mergedInAbra2 = bamBatchTag.combine(refBatchTag, by: 0)
+  bamDeDupBatchTag = deDupBAM.map { [ it[0].batch_id, it ] }
+  mergedInAbra2 = bamDeDupBatchTag.combine(refBatchTag, by: 0)
 
   ABRA2( mergedInAbra2.map{ it[1] }, mergedInAbra2.map{ it[2] })
   realignedBAM = ABRA2.out.bam
@@ -171,6 +191,7 @@ workflow VIRAL_VARIANT {
 
   // add 'IVAR_VARIANTS_ALL.out.mpileup_cov' as input of 'FILTER_REGROUP_IVAR_VARIANTS' to fill the blanks REF_DP at unvaribale position/sample
   summaryVarByBatch = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs
+  summaryVarByBatchLight = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs_light
   summaryVarByBatchLgFrmt = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs_long_frmt
 
 
@@ -179,19 +200,15 @@ workflow VIRAL_VARIANT {
 
 
   // for upcoming version: plots QC and results (cf. entourage: 'https://codeberg.org/CENMIG/entourage/src/branch/v1.0/example%20results')
-  // (% and nb reads mapped, alignement score, % bases assigned, cov of each smpl by batch, % base covered, % variable base uncovered on at least one smpl (by batch), indel warning)
+  // (% and nb reads mapped, % duplicates, alignement score, % bases assigned, cov of each smpl by batch, % base covered, % variable base uncovered on at least one smpl (by batch), indel warning)
 
 
   emit:   // conserve meta in emit ??
   summary_var_by_batch = summaryVarByBatch
+  summary_var_by_batch_light = summaryVarByBatchLight
   summary_var_by_batch_long_frmt = summaryVarByBatchLgFrmt
-  var_batch_filtered = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_batch_filtered_all_iSNVs             //
-  var_by_smpl_filtered = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_filtered_all_iSNVs
-  var_by_smpl_corrected = FILTER_REGROUP_IVAR_VARIANTS.out.smpl_corrected_all_iSNVs        
-  subset_mpileup_cov_by_smpl = mpileupCovBySmpl     //
   transfered_gff = refWithTransferedAnnot.map { it[1][1] }
-  psa_algn = TRANSFERT_GFF.out.psa                         //
-  psa_genomic_coords = TRANSFERT_GFF.out.genomic_coords    //
+  psa_algn = TRANSFERT_GFF.out.psa
   flagstat = SAM_BAM_SORT_IDX.out.flagstat
   aln_bam = realignedBAM
 }

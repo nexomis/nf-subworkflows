@@ -2,6 +2,7 @@
 
 
 import pandas as pd
+import numpy as np
 import os
 
 
@@ -66,6 +67,76 @@ def read_short_mpileup(short_mpileup_files):
 
 
 
+def reorder_common_columns(df):
+    def merge_AA_cols(row):
+        ref_aa = row['REF_AA']
+        pos_aa = row['POS_AA']
+        alt_aa = row['ALT_AA']
+        if ref_aa == '' and pos_aa == '' and alt_aa == '':
+            return ''
+        elif ref_aa == '' or alt_aa == '' or pos_aa == '':
+            return 'WARN'
+        else:
+            return f"{ref_aa}{pos_aa}{alt_aa}"
+            
+    def is_synonym(row):
+        ref_aa = row['REF_AA']
+        alt_aa = row['ALT_AA']
+        if ref_aa == '' and alt_aa == '':
+            return ''
+        elif ref_aa == '' or alt_aa == '':
+            return 'WARN'
+        elif ref_aa == alt_aa:
+            return 'true'
+        else:
+            return 'false'
+            
+    def is_indel(row):
+        alt = row['ALT']
+        print(f">>>>{alt}")
+        print(f":::{row}")
+        if pd.isna(alt):
+            return np.nan
+        elif len(alt) == 1:
+            return 'false'
+        elif alt.startswith('+') or alt.startswith('-'):
+            return 'true'
+        else:
+            return 'WARN'
+            
+    def is_FS(row):
+        alt = row['ALT']
+        if pd.isna(alt):
+            return np.nan
+        elif len(alt) == 1:
+            return ''
+        elif alt.startswith('+') or alt.startswith('-'):
+            alt_sequence = alt[1:]
+            if len(alt_sequence) % 3 != 0:
+                return 'true'
+            else:
+                return 'false'
+        else:
+            return 'WARN'
+            
+    df['CODON'] = df['REF_CODON'] + '>' + df['ALT_CODON']
+    df['AA'] = df.apply(merge_AA_cols, axis=1)
+    df['is_synonym'] = df.apply(is_synonym, axis=1)
+    df['is_indel'] = df.apply(is_indel, axis=1)
+    df['is_FS'] = df.apply(is_FS, axis=1)
+    
+    df = df.drop(columns=['REF_CODON', 'ALT_CODON', 'REF_AA', 'POS_AA', 'ALT_AA'])
+    
+    # reorder the fisrt columns
+    first_cols = ['REGION', 'POS', 'REF', 'ALT', 'GENE', 'GFF_ID', 'CODON', 'AA', 'is_synonym', 'is_indel', 'is_FS']
+    other_cols = [col for col in df.columns if col not in first_cols]
+    new_cols_order = first_cols + other_cols
+    df = df[new_cols_order]
+
+    return df
+
+
+
 def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_prefix):
     # import interest positions
     positions_df = pd.read_csv(csv_positions, sep='\\t')
@@ -74,8 +145,10 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     output_dir = out_prefix + "_batchFiltered"
     os.makedirs(output_dir)
     common_columns = ['REGION', 'POS', 'REF', 'ALT', 'GENE', 'GFF_ID', 'REF_CODON', 'REF_AA', 'ALT_CODON', 'ALT_AA', 'POS_AA']
+    light_variable_columns = ['ALT_FREQ', 'TOTAL_DP']
     all_samples_filtered_long_frmt = []
     all_samples_filtered_frmt_multi_cols = []
+    all_samples_filtered_frmt_multi_cols_light = []
     for tsv_file in tsv_files:
         sample_name = os.path.basename(tsv_file.replace('_corrected', '').replace('.tsv', ''))
         # import raw data
@@ -98,7 +171,8 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         # save in specific file complete filtered sample tsv
         filtered_output_path = os.path.join(output_dir, f"{sample_name}_batchFiltered.tsv")
         filtered_df.to_csv(filtered_output_path, sep='\\t', index=False)
-        
+        filtered_df_light = filtered_df
+
         # long format
         filtered_df_long_format = filtered_df
         filtered_df_long_format["SAMPLE"] = sample_name
@@ -111,6 +185,13 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         filtered_df = filtered_df.rename(columns=renamed_columns)
         all_samples_filtered_frmt_multi_cols.append(filtered_df)
 
+        # multi col by sample format LIGHT: reordone and rename specific columns using sample_name and append to list of df to merge
+        # HOT_fix, need to be refactorise (select column out of this loop or a least write specific function !)
+        filtered_df_light = filtered_df_light[common_columns + light_variable_columns]
+        renamed_columns = {col: f"{col}_{sample_name}" for col in light_variable_columns}
+        filtered_df_light = filtered_df_light.rename(columns=renamed_columns)
+        all_samples_filtered_frmt_multi_cols_light.append(filtered_df_light)
+
     ## export filtered df of all sample on one unique file
     # multi col by sample format
     global_output_file_frmt_multi_cols = out_prefix + "_summary_all_iSNVs.tsv"
@@ -118,12 +199,18 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     for df in all_samples_filtered_frmt_multi_cols[1:]:
         global_df = pd.merge(global_df, df, on=common_columns, how='outer')
     global_df.to_csv(global_output_file_frmt_multi_cols, sep='\\t', index=False)
+    # multi col by sample format LIGHT
+    # HOT_fix, need to be refactorise (select column out of this loop or a least write specific function !)
+    global_output_file_frmt_multi_cols_light = out_prefix + "_summary_all_iSNVs_light.tsv"
+    global_df_light = all_samples_filtered_frmt_multi_cols_light[0]
+    for df in all_samples_filtered_frmt_multi_cols_light[1:]:
+        global_df_light = pd.merge(global_df_light, df, on=common_columns, how='outer')
+    global_df_light = reorder_common_columns(global_df_light)
+    global_df_light.to_csv(global_output_file_frmt_multi_cols_light, sep='\\t', index=False)
     # long format
     filtered_long_frmt= pd.concat(all_samples_filtered_long_frmt, ignore_index=True)
     global_output_file_frmt_long = out_prefix + "_summary_all_iSNVs_long_format.tsv"
     filtered_long_frmt.to_csv(global_output_file_frmt_long, sep='\\t', index=False)
-
-    # TODO: for each pos in global_df, for each smpl, increade value of REF_DP, ALT_DP, ALT_FREQ and TOAL_DP using dictionay constructed about mpileup result.
 
 
 
