@@ -17,7 +17,7 @@ process FILTER_REGROUP_IVAR_VARIANTS {
   script:
   min_dp = task.ext.min_dp ?: 30
   ref_dp_ratio_max = task.ext.ref_ratio_threshold ?: 0.9
-  alt_dp_ratio_min = task.ext.alt_ratio_threshold ?: 0.0
+  alt_dp_ratio_min = task.ext.alt_ratio_threshold ?: 0.002
   out_prefix = meta.label ?: meta.id
 
   template "filter_and_regroup_ivar_variants.py"
