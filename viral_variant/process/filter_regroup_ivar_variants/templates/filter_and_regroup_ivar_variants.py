@@ -2,6 +2,7 @@
 
 
 import pandas as pd
+import numpy as np
 import os
 
 
@@ -63,6 +64,76 @@ def read_short_mpileup(short_mpileup_files):
         mpileup_df = pd.read_csv(short_mpileup_file, sep='\\t', header=None, names=['REGION', 'POS', 'REF', 'TOTAL_DP'])
         short_mpileup_dict[sample_name] = mpileup_df
     return short_mpileup_dict
+
+
+
+def reorder_common_columns(df):
+    def merge_AA_cols(row):
+        ref_aa = row['REF_AA']
+        pos_aa = row['POS_AA']
+        alt_aa = row['ALT_AA']
+        if ref_aa == '' and pos_aa == '' and alt_aa == '':
+            return ''
+        elif ref_aa == '' or alt_aa == '' or pos_aa == '':
+            return 'WARN'
+        else:
+            return f"{ref_aa}{pos_aa}{alt_aa}"
+            
+    def is_synonym(row):
+        ref_aa = row['REF_AA']
+        alt_aa = row['ALT_AA']
+        if ref_aa == '' and alt_aa == '':
+            return ''
+        elif ref_aa == '' or alt_aa == '':
+            return 'WARN'
+        elif ref_aa == alt_aa:
+            return 'true'
+        else:
+            return 'false'
+            
+    def is_indel(row):
+        alt = row['ALT']
+        print(f">>>>{alt}")
+        print(f":::{row}")
+        if pd.isna(alt):
+            return np.nan
+        elif len(alt) == 1:
+            return 'false'
+        elif alt.startswith('+') or alt.startswith('-'):
+            return 'true'
+        else:
+            return 'WARN'
+            
+    def is_FS(row):
+        alt = row['ALT']
+        if pd.isna(alt):
+            return np.nan
+        elif len(alt) == 1:
+            return ''
+        elif alt.startswith('+') or alt.startswith('-'):
+            alt_sequence = alt[1:]
+            if len(alt_sequence) % 3 != 0:
+                return 'true'
+            else:
+                return 'false'
+        else:
+            return 'WARN'
+            
+    df['CODON'] = df['REF_CODON'] + '>' + df['ALT_CODON']
+    df['AA'] = df.apply(merge_AA_cols, axis=1)
+    df['is_synonym'] = df.apply(is_synonym, axis=1)
+    df['is_indel'] = df.apply(is_indel, axis=1)
+    df['is_FS'] = df.apply(is_FS, axis=1)
+    
+    df = df.drop(columns=['REF_CODON', 'ALT_CODON', 'REF_AA', 'POS_AA', 'ALT_AA'])
+    
+    # reorder the fisrt columns
+    first_cols = ['REGION', 'POS', 'REF', 'ALT', 'GENE', 'GFF_ID', 'CODON', 'AA', 'is_synonym', 'is_indel', 'is_FS']
+    other_cols = [col for col in df.columns if col not in first_cols]
+    new_cols_order = first_cols + other_cols
+    df = df[new_cols_order]
+
+    return df
 
 
 
@@ -134,6 +205,7 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
     global_df_light = all_samples_filtered_frmt_multi_cols_light[0]
     for df in all_samples_filtered_frmt_multi_cols_light[1:]:
         global_df_light = pd.merge(global_df_light, df, on=common_columns, how='outer')
+    global_df_light = reorder_common_columns(global_df_light)
     global_df_light.to_csv(global_output_file_frmt_multi_cols_light, sep='\\t', index=False)
     # long format
     filtered_long_frmt= pd.concat(all_samples_filtered_long_frmt, ignore_index=True)
