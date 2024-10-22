@@ -4,7 +4,9 @@ nextflow.preview.output = true
 
 // include - process
 include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
+include { BWA_INDEX } from '../../process/bwa/index/main.nf'
 include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
+include { BWA_MEM } from '../../process/bwa/mem/main.nf'
 include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
 include { PICARD_MARK_DUPLICATES } from '../../process/picard_tools/markduplicates/main.nf'
@@ -20,8 +22,8 @@ workflow VIRAL_VARIANT {
   take:
   inReads   // (meta, [fq_r1, {fq_r2}]): meta.id (sample_id), meta.batch_id, meta.rank_in_batch
   inRef     // (meta_ref, [inRef_fa, {inRef_gff}]): meta.id (correspond to batch_id)
-  inAnnot  // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (correspond to batch_id)
-
+  inAnnot   // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (correspond to batch_id)
+  mapper    // available otpion: "bowtie2" or "bwa-mem"
 
   main:
   
@@ -106,15 +108,28 @@ workflow VIRAL_VARIANT {
   // for upcoming version: reads correction (already performed in spades?): really useful ?
 
   // mapping (with index building and bam sorting)
-  BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
-  bwtIdx = BOWTIE2_BUILD.out.idx
-
   readsBatchTag = inReads.map { [ it[0].batch_id, it ] }
-  bwtIdxBatchTag = bwtIdx.map { [ it[0].id, it ] }
-  mergedInMapping = readsBatchTag.combine(bwtIdxBatchTag, by: 0)
-  BOWTIE2(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
+  
+  if ( mapper == "bowtie2" ) {
+    BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
+    bwtIdx = BOWTIE2_BUILD.out.idx
 
-  rawSAM = BOWTIE2.out
+    bwtIdxBatchTag = bwtIdx.map { [ it[0].id, it ] }
+    mergedInMapping = readsBatchTag.combine(bwtIdxBatchTag, by: 0)
+    BOWTIE2(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
+    rawSAM = BOWTIE2.out
+  } else if ( mapper == "bwa-mem" ) {
+    BWA_INDEX(inRef.map { [ it[0], it[1][0] ] })
+    bwaIdx = BWA_INDEX.out.idx
+
+    bwaIdxBatchTag = bwaIdx.map { [ it[0].id, it ] }
+    mergedInMapping = readsBatchTag.combine(bwaIdxBatchTag, by: 0)
+    BWA_MEM(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
+    rawSAM = BWA_MEM.out
+  } else {
+    error "Invalid values for mapper: '${mapper}' (supported: 'bowtie2', 'bwa-mem')"
+  }
+
   SAM_BAM_SORT_IDX(rawSAM)
   sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
 
