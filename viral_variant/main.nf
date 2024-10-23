@@ -11,6 +11,7 @@ include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
 include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
 include { PICARD_MARK_DUPLICATES } from '../../process/picard_tools/markduplicates/main.nf'
 include { ABRA2 } from '../../process/abra2/main.nf'
+include { SAV_CALL } from '../../process/sav_call/main.nf'
 include { IVAR_VARIANTS_ALL } from '../../process/ivar/variants/main.nf'
 include { FILTER_REGROUP_IVAR_VARIANTS } from './process/filter_regroup_ivar_variants/main.nf'
 include { checkMeta } from '../utils.nf'
@@ -24,6 +25,7 @@ workflow VIRAL_VARIANT {
   inRef     // (meta_ref, [inRef_fa, {inRef_gff}]): meta.id (correspond to batch_id)
   inAnnot   // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (correspond to batch_id)
   mapper    // available otpion: "bowtie2" or "bwa-mem"
+  varCaller // available otpion: "ivar" and/or "sav_call"
 
   main:
   
@@ -135,7 +137,7 @@ workflow VIRAL_VARIANT {
 
 
   // remove/mark duplicates
-  bamBatchTag = sortedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // exclu '.bai' (not useful for markduplcates)
+  bamBatchTag = sortedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // excl. '.bai' (not useful for markduplcates)
   refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
   mergedInMarkDup = bamBatchTag.combine(refBatchTag, by: 0)
 
@@ -152,48 +154,74 @@ workflow VIRAL_VARIANT {
   // for upcoming version: ivar consensus - from specific mpileup to set specific parameters (quality, depth, ...)
 
 
+  // variant calling
+
+  validVarCallers = ['ivar', 'sav_call']
+  varCallers = varCaller?.trim() ? varCaller.split(",") : []
+  if (varCallers.size() == 0) {
+    error "The variant caller variable is empty. Please provide a valid mapper (supported: ${validVarCallers})."
+  }
+  invalidVarCallers = varCallers.findAll { !(it in validVarCallers) }
+  if (invalidVarCallers.size() != 0) {
+    error "Invalid values for variant caller: '${invalidVarCallers.join(', ')}' (supported: ${validVarCallers})"
+  }
+
+  if ( 'sav_call' in varCallers ) {
+    // sav_call
+    bamBatchTag = realignedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // excl. '.bai' (not useful for sav_call)
+    refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
+    mergedInSavCall = bamBatchTag.combine(refBatchTag, by: 0)
+    
+    SAV_CALL(mergedInSavCall.map{ it[1] }, mergedInSavCall.map{ it[2] })
+    savCallSNV = SAV_CALL.out.snv_both
+    savCallSNVrev = SAV_CALL.out.snv_rev
+    savCallSNVfwd = SAV_CALL.out.snv_fwd
+    savCallIndel = SAV_CALL.out.snv_raw_indel
+    savCallbase = SAV_CALL.out.base_comp
+  }
+  if ( 'ivar' in varCallers ) {
   // unfiltered mpileup + unfiltered ivar
-  completeRefBatchTag = refBatchTagAnnotStatus.with_own_annotation
-                          .mix( refWithTransferedAnnot
-                            .map { [ it[0].id, it ] } )
+    completeRefBatchTag = refBatchTagAnnotStatus.with_own_annotation
+                            .mix( refWithTransferedAnnot
+                              .map { [ it[0].id, it ] } )
 
-  bamWithRefBatchTag = realignedBAM
-                         .map{ [ it[0].batch_id, [ it[0], [it[1], it[2]] ] ] }
-                         .combine(completeRefBatchTag, by: 0)
+    bamWithRefBatchTag = realignedBAM
+                          .map{ [ it[0].batch_id, [ it[0], [it[1], it[2]] ] ] }
+                          .combine(completeRefBatchTag, by: 0)
 
-  IVAR_VARIANTS_ALL( bamWithRefBatchTag.map { it[1] },
-                         bamWithRefBatchTag.map { it[2] } )
+    IVAR_VARIANTS_ALL( bamWithRefBatchTag.map { it[1] },
+                          bamWithRefBatchTag.map { it[2] } )
 
-  ivarRawBySmpl = IVAR_VARIANTS_ALL.out.raw_iSNV_tsv
-  mpileupCovBySmpl = IVAR_VARIANTS_ALL.out.mpileup_cov
+    ivarRawBySmpl = IVAR_VARIANTS_ALL.out.raw_iSNV_tsv
+    mpileupCovBySmpl = IVAR_VARIANTS_ALL.out.mpileup_cov
 
-  // filter ivar_complete to keep only interest pos and write summary file by batch (following order designed by 'rank_in_batch' key)
+    // filter ivar_complete to keep only interest pos and write summary file by batch (following order designed by 'rank_in_batch' key)
 
-  ivarRawFilesByBatch = ivarRawBySmpl
-                          .map { [it[0].rank_in_batch as Integer, it[0].batch_id, it[1] ] }
-                          .toSortedList{ a, b -> a[0] <=> b[0] }
-                          .flatMap()
-                          .map { [ it[1], it[2] ] }
-                          .groupTuple()
+    ivarRawFilesByBatch = ivarRawBySmpl
+                            .map { [it[0].rank_in_batch as Integer, it[0].batch_id, it[1] ] }
+                            .toSortedList{ a, b -> a[0] <=> b[0] }
+                            .flatMap()
+                            .map { [ it[1], it[2] ] }
+                            .groupTuple()
 
-  mpileupCovFilesByBatch = mpileupCovBySmpl
-                             .map { [it[0].rank_in_batch as Integer, it[0].batch_id, it[1] ] }
-                             .toSortedList{ a, b -> a[0] <=> b[0] }
-                             .flatMap()
-                             .map { [ it[1], it[2] ] }
-                             .groupTuple()
+    mpileupCovFilesByBatch = mpileupCovBySmpl
+                              .map { [it[0].rank_in_batch as Integer, it[0].batch_id, it[1] ] }
+                              .toSortedList{ a, b -> a[0] <=> b[0] }
+                              .flatMap()
+                              .map { [ it[1], it[2] ] }
+                              .groupTuple()
 
-  joinIvarAndMpileupByBatch = ivarRawFilesByBatch
-                                .join(mpileupCovFilesByBatch)
-                                .map{ [ [id:it[0]], it[1], it[2] ] }
+    joinIvarAndMpileupByBatch = ivarRawFilesByBatch
+                                  .join(mpileupCovFilesByBatch)
+                                  .map{ [ [id:it[0]], it[1], it[2] ] }
 
-  FILTER_REGROUP_IVAR_VARIANTS( joinIvarAndMpileupByBatch )
+    FILTER_REGROUP_IVAR_VARIANTS( joinIvarAndMpileupByBatch )
 
-  // add 'IVAR_VARIANTS_ALL.out.mpileup_cov' as input of 'FILTER_REGROUP_IVAR_VARIANTS' to fill the blanks REF_DP at unvaribale position/sample
-  summaryVarByBatch = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs
-  summaryVarByBatchLight = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs_light
-  summaryVarByBatchLgFrmt = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs_long_frmt
-
+    // add 'IVAR_VARIANTS_ALL.out.mpileup_cov' as input of 'FILTER_REGROUP_IVAR_VARIANTS' to fill the blanks REF_DP at unvaribale position/sample
+    summaryiVarByBatch = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs
+    summaryiVarByBatchLight = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs_light
+    summaryiVarByBatchLgFrmt = FILTER_REGROUP_IVAR_VARIANTS.out.batch_summary_all_iSNVs_long_frmt
+  }
 
   // for upcoming version: in option (at batch level when 'inAnnot' !) edit coord in batch_summary_all_iSNVs (and individual file ?): g.inAnnot -> g.inRefCoord and g.inRefCoord -> c.inRefCoord
   // (with management of locus assigned to multiple genes!!! better genes_ref -> genes_alt???)
@@ -204,9 +232,14 @@ workflow VIRAL_VARIANT {
 
 
   emit:   // conserve meta in emit ??
-  summary_var_by_batch = summaryVarByBatch
-  summary_var_by_batch_light = summaryVarByBatchLight
-  summary_var_by_batch_long_frmt = summaryVarByBatchLgFrmt
+  sav_call_snv = savCallSNV
+  sav_call_snv_rev = savCallSNVrev
+  sav_call_snv_fwd = savCallSNVfwd
+  sav_call_snv_indel = savCallIndel
+  sav_call_snv_base = savCallbase
+  summary_ivar_by_batch = summaryiVarByBatch
+  summary_ivar_by_batch_light = summaryiVarByBatchLight
+  summary_ivar_by_batch_long_frmt = summaryiVarByBatchLgFrmt
   transfered_gff = refWithTransferedAnnot.map { it[1][1] }
   psa_algn = TRANSFERT_GFF.out.psa
   flagstat = SAM_BAM_SORT_IDX.out.flagstat

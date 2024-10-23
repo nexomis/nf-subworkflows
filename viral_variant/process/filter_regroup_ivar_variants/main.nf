@@ -15,7 +15,7 @@ process FILTER_REGROUP_IVAR_VARIANTS {
   tuple val(meta), path("${meta.label ?: meta.id}_batchFiltered", type: 'dir') , optional:false ,  emit: smpl_batch_filtered_all_iSNVs
 
   script:
-  min_dp = task.ext.min_dp ?: 30
+  min_dp = task.ext.min_dp ?: 20
   ref_dp_ratio_max = task.ext.ref_ratio_threshold ?: 0.9
   alt_dp_ratio_min = task.ext.alt_ratio_threshold ?: 0.002
   out_prefix = meta.label ?: meta.id

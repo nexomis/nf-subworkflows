@@ -158,6 +158,7 @@ def filter_variants_by_batch(tsv_files, csv_positions, short_mpileup_dict, out_p
         filtered_df = filtered_df.sort_values(by=['REGION', 'POS', 'REF']).reset_index(drop=True)
 
         # complete missing 'TOTAP_DP' about short_mpileup_dict
+        ## TODO: not ideal !!!!!!!! refact completion of 'TOTAL_DP' in remaing lines!!!!
         if sample_name in short_mpileup_dict:
             mpileup_df = short_mpileup_dict[sample_name]
             filtered_df = filtered_df.merge(mpileup_df, on=['REGION', 'POS', 'REF'], how='left', suffixes=('', '_mpileup'))
