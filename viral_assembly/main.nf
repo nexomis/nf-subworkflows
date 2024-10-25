@@ -1,11 +1,13 @@
 // include - process
 
 include { FASTP_DEDUP } from '../../process/fastp/dedup/main.nf'
-include { BOWTIE2_BUILD } from '../../process/bowtie2/bowtie2-build/main.nf'
-include { BOWTIE2 } from '../../process/bowtie2/mapping/main.nf'
-include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/main.nf'
+include { BOWTIE2_BUILD as BT2_BUILD; BOWTIE2_BUILD as BT2_BUILD_ANCHOR } from '../../process/bowtie2/bowtie2-build/main.nf'
+include { BOWTIE2 as BT2; BOWTIE2 as BT2_ANCHOR } from '../../process/bowtie2/mapping/main.nf'
+include { SAM_BAM_SORT_IDX; SAM_BAM_SORT_IDX as SORT_ANCHOR} from '../../process/samtools/convert-sort-index/main.nf'
+include { EXTRACT_MAPPED_FASTQ } from '../../process/samtools/extract-mapped-fastq/main.nf'
+include { CONCAT_FQ } from '../../process/concat_fq/main.nf'
 include { QUAST } from '../../process/quast/main.nf'
-include { GUNZIP } from '../../process/gunzip/main.nf'
+include { GUNZIP as GUNZIP_ANCHOR; GUNZIP as GUNZIP_REF} from '../../process/gunzip/main.nf'
 include { SPADES } from '../../process/spades/main.nf'
 include { ABACAS } from '../../process/abacas/main.nf'
 include { EMPTY_FILE } from '../../process/empty_file/main.nf'
@@ -33,12 +35,14 @@ workflow VIRAL_ASSEMBLY {
   inputReads
   inputK2Index
   inputRefGenome
+  anchorsFasta
   protFasta
 
   main:
 
   def expectedMeta = [
       "ref_id": ["String", "NullObject"],
+      "anchor_id": ["String", "NullObject"],
       "class_db_ids": ["String[]", "ArrayList"],
       "class_tool": ["String"],
       "realign": ["String"],
@@ -52,6 +56,7 @@ workflow VIRAL_ASSEMBLY {
   inputReads.map { checkMeta(it, expectedMeta) }
   inputK2Index.map { checkMeta(it) }
   inputRefGenome.map { checkMeta(it) }
+  anchorsFasta.map { checkMeta(it) }
   protFasta.map { checkMeta(it) }
 
   sepRefGenome = inputRefGenome.branch {
@@ -59,9 +64,20 @@ workflow VIRAL_ASSEMBLY {
     other: true
   }
 
-  GUNZIP(sepRefGenome.gzip)
+  GUNZIP_REF(sepRefGenome.gzip)
   | concat(sepRefGenome.other)
   | set {faRefGenome}
+
+  sepAnchors = anchorsFasta.branch {
+    gzip: ["gz","gzip","z"].contains(it[1].getExtension().toLowerCase())
+    other: true
+  }
+
+  GUNZIP_ANCHOR(sepAnchors.gzip)
+  | concat(sepAnchors.other)
+  | set {faAnchors}
+
+  anchorsBt2Index = BT2_BUILD_ANCHOR(faAnchors)
 
   UNSPRING_READS(inputReads)
   UNSPRING_READS.out
@@ -73,11 +89,35 @@ workflow VIRAL_ASSEMBLY {
   }
   | set { allFastq }
 
+  allFastq
+  | map {[it[0].anchor_id, it]}
+  | filter {it[0]}
+  | combine(anchorsBt2Index.map {[it[0].id, it]}, by:0)
+  | set {joinInputforBt2Anchors}
+
+  BT2_ANCHOR(joinInputforBt2Anchors.map{it[1]}, joinInputforBt2Anchors.map{it[2]})
+  | SORT_ANCHOR
+
+  EXTRACT_MAPPED_FASTQ(SORT_ANCHOR.out.bam_bai.map{[it[0], it[1]]})
+
   // Start Remove Duplicates Before Assembly
+  EXTRACT_MAPPED_FASTQ.out.unmapped
+  | concat(allFastq.filter{!(it[0].anchor_id && it[0].anchor_id != "")})
+  | set {inputForClassification}
 
-  inputReadsUnclassified = ITERATIVE_UNCLASSIFIED_READS_EXTRACTION(allFastq, inputK2Index)
+  inputReadsUnclassified = ITERATIVE_UNCLASSIFIED_READS_EXTRACTION(inputForClassification, inputK2Index)
 
-  inputReadsUnclassified.filter{ it[0].dedup == "yes" }
+  inputReadsUnclassified
+  | filter {it[0].anchor_id && it[0].anchor_id != ""}
+  | map {[it[0].id, it]}
+  | combine(EXTRACT_MAPPED_FASTQ.out.mapped.map{[it[0].id, it]}, by:0)
+  | set {joinInputForConcat}
+
+  CONCAT_FQ(joinInputForConcat.map{it[1]}, joinInputForConcat.map{it[2]})
+  | concat(inputReadsUnclassified.filter{!(it[0].anchor_id && it[0].anchor_id != "")})
+  | set {inputReadsAfterSelection}
+
+  inputReadsAfterSelection.filter{ it[0].dedup == "yes" }
   | map { 
     new_meta = it[0].clone()
     new_meta.reads_id = "${new_meta.reads_id}_dedup"
@@ -88,7 +128,7 @@ workflow VIRAL_ASSEMBLY {
 
   dedupReads = FASTP_DEDUP(readsForDedup).reads
 
-  inputReadsUnclassified.filter{ 
+  inputReadsAfterSelection.filter{ 
   (it[0].dedup == "no") || ((it[0].dedup == "yes") && (it[0].keep_before_dedup == "yes"))
   }
   | set { notDedupReadsToKeep }
@@ -189,8 +229,8 @@ workflow VIRAL_ASSEMBLY {
   | filter { it[0].realign == "yes" }
   | set { toRealignScaffolds }
 
-  BOWTIE2_BUILD(toRealignScaffolds)
-  BOWTIE2_BUILD.out.idx
+  BT2_BUILD(toRealignScaffolds)
+  BT2_BUILD.out.idx
   | set { bwtIdx }
 
   mergedForMapping.map {[it[0].id, it]}
@@ -203,9 +243,9 @@ workflow VIRAL_ASSEMBLY {
   }
   | set {joinInputforBt2}
 
-  BOWTIE2(joinInputforBt2.map {it[0]},joinInputforBt2.map {it[1]})
+  BT2(joinInputforBt2.map {it[0]},joinInputforBt2.map {it[1]})
 
-  rawSAM = BOWTIE2.out
+  rawSAM = BT2.out
   SAM_BAM_SORT_IDX(rawSAM)
   sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
 
@@ -255,7 +295,9 @@ workflow VIRAL_ASSEMBLY {
 
   emit:
   all_aln               = sortedBAM
-  cleaned_reads         = inputReadsUnclassified
+  cleaned_reads         = inputReadsAfterSelection
+  anchored_reads        = EXTRACT_MAPPED_FASTQ.out.mapped
+  unclassed_reads       = inputReadsUnclassified
   all_scaffolds         = finalScaffolds
   hannot_raw            = HANNOT.out.raw_annot
   hannot_filtered       = HANNOT.out.annot
