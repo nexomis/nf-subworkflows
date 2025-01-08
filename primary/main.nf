@@ -3,7 +3,7 @@ include { FASTP } from '../../process/fastp/main.nf'
 include { KRAKEN2 } from '../../process/kraken2/main.nf'
 include { RECENTRIFUGE } from '../../process/recentrifuge/main.nf'
 include { SEQTK_SAMPLE as SEQTK_SAMPLE_RAW; SEQTK_SAMPLE as SEQTK_SAMPLE_TRIMMED } from '../../process/seqtk/sample/main.nf'
-include { SPRING_DECOMPRESS } from '../../process/spring/decompress/main.nf'
+include { SLIMFASTQ_DECOMPRESS } from '../../process/slimfastq/decompress/main.nf'
 include { FASTQC as FASTQC_RAW; FASTQC as FASTQC_TRIMMED } from '../../process/fastqc/main.nf'
 
 process PRIMARY_MULTIQC {
@@ -51,12 +51,12 @@ workflow PRIMARY {
 
   inputReads
   | branch {
-    spring: it[0].read_type == "spring"
-    fastq: it[0].read_type != "spring"
+    sfq: it[0].read_type == "sfq"
+    fastq: it[0].read_type != "sfq"
   }
   | set { inputs }
 
-  SPRING_DECOMPRESS(inputs.spring)
+  SLIMFASTQ_DECOMPRESS(inputs.sfq)
   | map {
     if (it[1].size()==1) {
       it[0].read_type = "SR"

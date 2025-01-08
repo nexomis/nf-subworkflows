@@ -18,9 +18,9 @@ single: [sample_name [file R1]]
 */
 
 include { PARSE_SEQ_DIR } from '../parse_seq_dir/main.nf'
-include { SPRING_DECOMPRESS } from '../../process/spring/decompress/main.nf'
+include { SLIMFASTQ_DECOMPRESS } from '../../process/slimfastq/decompress/main.nf'
 
-workflow PARSE_SEQ_DIR_UNSPRING {
+workflow PARSE_SEQ_DIR_UNSFQ {
   take:
   inputDir
 
@@ -28,12 +28,12 @@ workflow PARSE_SEQ_DIR_UNSPRING {
 
   reads = PARSE_SEQ_DIR(inputDir)
 
-  reads.spring
-  | SPRING_DECOMPRESS
-  | set {unspringReads}
+  reads.sfq
+  | SLIMFASTQ_DECOMPRESS
+  | set {unsfqReads}
 
   reads.fastq
-  | concat(unspringReads)
+  | concat(unsfqReads)
   | set {allFastq}
 
   emit:

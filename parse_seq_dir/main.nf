@@ -14,7 +14,6 @@ It takes directory as input
 It gives list of sequences files with sample name as output:
 paired: [sample_name [file R1, file R2]]
 single: [sample_name [file R1]]
-spring: [sample_name [file spring]]
 
 */
 
@@ -43,13 +42,12 @@ workflow PARSE_SEQ_DIR {
       samplesToKeep = it[1]
     }
     
-
     def layout = ""
     files.each { file ->
       def name = file.getName()
       def parent = file.getParent()
       layout = "SE"
-      if ((match = name =~ /(?i)^(.+?)([\._]r?[12](.*?))?((\.fastq|\.fq)(\.)?(gz|gzip|z|zip|xz|bzip2|b2|bz2)?)$/)) {
+      if ((match = name =~ /(?i)^(.+?)([\._]r?[12](.*?))?((\.fastq|\.fq|\.sfq)(\.)?(gz|gzip|z|zip|xz|bzip2|b2|bz2)?)$/)) {
         def sampleName = match.group(1)
         def readIndicator = match.group(2)
         def laneIndicator = match.group(3) // maybe confused with readIndicator and is fixed below (weird names such as s_R1_R1)
@@ -91,39 +89,51 @@ workflow PARSE_SEQ_DIR {
           sampleName = seSampleName
         }
         if (samplesToKeep.size() == 0 || samplesToKeep.contains(sampleName)) {
-          list2return.add(tuple(layout, [sampleName, file]))
-        }
-      } else if ((match = name =~ /(?i)^(.+?)\.spring$/)) {
-        def sampleName = match.group(1)
-        if (samplesToKeep.size() == 0 || samplesToKeep.contains(sampleName)) {
-          list2return.add(tuple("spring", [sampleName, file]))
+          // Determine read type based on file extension
+          def read_type = extension.toLowerCase().contains(".sfq") ? "sfq" : "fastq"
+          list2return.add(tuple(layout + "_" + read_type, [sampleName, file]))
         }
       }
     }
     return list2return
   }
   | branch {
-    single: it[0] == "SE"
+    single_fastq: it[0] == "SE_fastq"
       return tuple(["id":it[1][0], "read_type": "SE"], [it[1][1]])
-    paired: it[0] == "PE"
+    paired_fastq: it[0] == "PE_fastq"
       return it[1]
-    spring: it[0] == "spring"
-      return tuple(["id":it[1][0], "read_type": "spring"], [it[1][1]])
+    single_sfq: it[0] == "SE_sfq"
+      return tuple(["id":it[1][0], "read_type": "sfq"], [it[1][1]])
+    paired_sfq: it[0] == "PE_sfq"
+      return it[1]
   }
   | set {allFiles}
 
-  allFiles.paired
+  // Handle paired PE files
+  allFiles.paired_fastq
   | groupTuple(by: 0)
   | map { it ->
       def sorted = it[1].sort { a, b -> a.name <=> b.name }
       return tuple(["id":it[0], "read_type": "PE"], sorted)
   }
-  | set {pairedFiles}
+  | set {pairedFastqFiles}
 
-  fastqFiles = pairedFiles.concat(allFiles.single)
+  // Handle paired sfq files
+  allFiles.paired_sfq
+  | groupTuple(by: 0)
+  | map { it ->
+      def sorted = it[1].sort { a, b -> a.name <=> b.name }
+      return tuple(["id":it[0], "read_type": "sfq"], sorted)
+  }
+  | set {pairedSfqFiles}
+
+  // Combine all fastq files
+  fastqFiles = pairedFastqFiles.concat(allFiles.single_fastq)
+
+  // Combine all sfq files
+  sfqFiles = pairedSfqFiles.concat(allFiles.single_sfq)
 
   emit:
     fastq = fastqFiles
-    spring = allFiles.spring
-
+    sfq = sfqFiles
 }
