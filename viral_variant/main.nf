@@ -1,6 +1,4 @@
 #!/usr/bin/env nextflow
-nextflow.preview.output = true
-
 
 // include - process
 include { TRANSFERT_GFF } from '../../process/transfer-annot-viral/about-global-psa/main.nf'
@@ -17,60 +15,49 @@ include { checkMeta } from '../utils.nf'
 
 workflow VIRAL_VARIANT {
   take:
-  inReads   // (meta, [fq_r1, {fq_r2}]): meta.id (sample_id), meta.batch_id, meta.rank_in_batch
-  inRef     // (meta_ref, [inRef_fa, {inRef_gff}]): meta.id (correspond to batch_id)
-  inAnnot   // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (correspond to batch_id)
-  mapper    // available option: "bowtie2" or "bwa-mem"
+  inputReads   // (meta, [fq_r1, {fq_r2}]): meta.id (sample_id), meta.batch_id, meta.rank_in_batch
+  inputRef     // (meta_ref, [inRef_fa, {inRef_gff}]): meta.id (correspond to batch_id)
+  inputAnnot   // (meta_annot, [inAnnot_fa, inAnnot_gff]): meta.id (correspond to batch_id)
+  mapper       // available option: "bowtie2" or "bwa-mem"
 
   main:
   
-  //// Validate input
-  // validate metadata structure
+  // Validate metadata structure
   def expectedMeta = [
     "batch_id": ["String"],
     "rank_in_batch": ["Integer"],
   ]
-  inReads.map { checkMeta(it, expectedMeta) }
-  inRef.map { checkMeta(it) }
-  inRef.map { checkMeta(it) } 
-  // validate arity of paths of each inputs
-  readsBatches = inReads.map { meta, file ->
-    assert file.size() in 1..2 : "nb reads files not attempted (${meta}, ${file})"
+  inputReads.map { checkMeta(it, expectedMeta) }
+  inputRef.map { checkMeta(it) }
+  inputAnnot.map { checkMeta(it) }
+
+  // Validate input files
+  inputReads.map { meta, file ->
+    assert file.size() in 1..2 : "Invalid number of read files (${meta}, ${file})"
   }
-  refBatches = inRef.map { meta, file ->
-    assert file.size() in 1..2 : "nb ref files not attempted (${meta}, ${file})"
+  inputRef.map { meta, file ->
+    assert file.size() in 1..2 : "Invalid number of reference files (${meta}, ${file})"
   }
-  annotBatches = inAnnot.map { meta, file ->
-    assert file.size() == 2 : "nb annot files not attempted (${meta}, ${file})"
+  inputAnnot.map { meta, file ->
+    assert file.size() == 2 : "Invalid number of annotation files (${meta}, ${file})"
   }
-  // validate concordance between batch of reads and batch of reference
-  readsBatches = inReads.map {it[0].batch_id}
-  refBatches = inRef.map { it[0].id }
-  readsBatchesCount = readsBatches
-                        .unique()
-                        .count()
-  refBatchesCount = refBatches.count()
-  maxBatchesCount = readsBatchesCount
-                      .join(refBatchesCount)
-                      .max()
-  unionBatchesCount = readsBatches
-                        .unique()
-                        .join(refBatches, remainder: true)
-                        .count()
-  unionBatchesCount
-    .combine(maxBatchesCount)
-    .map { union, max ->
-      if (union != max) {
+
+  // Validate batch concordance
+  inputReads
+    .map { it[0].batch_id }
+    .unique()
+    .join(inputRef.map { it[0].id }, remainder: true)
+    .map { batch_id ->
+      if (!batch_id) {
         error "Error: Different batches between reads and reference."
       }
     }
 
-  // validate absence of duplicatation of ananotation (includde verification of concordance between batch of reference and potential batch of annotation)
-  inRefIdTag = inRef.map { [ it[0].id, it[1] ] }
-  inAnnotIdTag = inAnnot.map { [ it[0].id, it[1] ] }
-  inRefIdTag
-    .join(inAnnotIdTag, remainder: true)
-    .map {batch_id, ref, annot ->
+  // Validate annotation consistency
+  inputRef
+    .map { [ it[0].id, it[1] ] }
+    .join(inputAnnot.map { [ it[0].id, it[1] ] }, remainder: true)
+    .map { batch_id, ref, annot ->
       if (ref == null) {
         error "Error: reference undefined (${batch_id})"
       } else if (!( ((ref.size() == 1) && (annot != null)) ||
@@ -79,137 +66,147 @@ workflow VIRAL_VARIANT {
       }
     }
 
-  // Transfert annotation from inAnnot to inRef (when no inRef_gff) + genomic coord dict: g.inRefSNV -> g.inRefCoord
-  // (TODO for last step of worflow: g.inRefCoord -> c.inRefCoord or coding -> coding to manage case where 1 locus is asigned to multiple coding element)
-  refBatchTag = inRef.map { [ it[0].id, it ] }
-
-  refBatchTagAnnotStatus = refBatchTag.branch {
-                             reannot: it[1][1].size() == 1
-                             with_own_annotation: it[1][1].size() == 2
-                             other: error "Unexpected input encountered (error nb files given: '${it}')" }
-  annotBatchTag = inAnnot.map { [ it[0].id, it ] }
-
-  joinRefReannotAndAnnot = refBatchTagAnnotStatus.reannot.join(annotBatchTag, by: 0)
-
-  TRANSFERT_GFF(joinRefReannotAndAnnot.map { it[1] },
-                joinRefReannotAndAnnot.map { it[2] })
-
-  transferedAnnot = TRANSFERT_GFF.out.transfered_gff
-  refWithTransferedAnnot = joinRefReannotAndAnnot
-                            .map { [ it[1][0].id, it[1] ] }
-                            .join ( transferedAnnot.map { [ it[0].id, it ] }, by: 0)
-                            .map{ [ it[1][0], [ it[1][1][0], it[2][1] ] ] }  // tuple (meta, [fa, gff])
-
-  // mapping (with index building and bam sorting)
-  readsBatchTag = inReads.map { [ it[0].batch_id, it ] }
-  
-  if ( mapper == "bowtie2" ) {
-    BOWTIE2_BUILD(inRef.map { [ it[0], it[1][0] ] })
-    bwtIdx = BOWTIE2_BUILD.out.idx
-
-    bwtIdxBatchTag = bwtIdx.map { [ it[0].id, it ] }
-    mergedInMapping = readsBatchTag.combine(bwtIdxBatchTag, by: 0)
-    BOWTIE2(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
-    rawSAM = BOWTIE2.out
-  } else if ( mapper == "bwa-mem" ) {
-    BWA_INDEX(inRef.map { [ it[0], it[1][0] ] })
-    bwaIdx = BWA_INDEX.out.idx
-
-    bwaIdxBatchTag = bwaIdx.map { [ it[0].id, it ] }
-    mergedInMapping = readsBatchTag.combine(bwaIdxBatchTag, by: 0)
-    BWA_MEM(mergedInMapping.map { it[1] }, mergedInMapping.map { it[2] })
-    rawSAM = BWA_MEM.out
-  } else {
-    error "Invalid values for mapper: '${mapper}' (supported: 'bowtie2', 'bwa-mem')"
-  }
-
-  SAM_BAM_SORT_IDX(rawSAM)
-  sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
-
-
-  // remove/mark duplicates
-  bamBatchTag = sortedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // excl. '.bai' (not useful for markduplcates)
-  refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
-  mergedInMarkDup = bamBatchTag.combine(refBatchTag, by: 0)
-
-  PICARD_MARK_DUPLICATES( mergedInMarkDup.map{ it[1] }, mergedInMarkDup.map{ it[2] })
-  deDupBAM = PICARD_MARK_DUPLICATES.out.bam_bai
-
-  // indel realignment (include sort/index): Ideally, do it at batch level ?
-  bamDeDupBatchTag = deDupBAM.map { [ it[0].batch_id, it ] }
-  mergedInAbra2 = bamDeDupBatchTag.combine(refBatchTag, by: 0)
-
-  ABRA2( mergedInAbra2.map{ it[1] }, mergedInAbra2.map{ it[2] })
-  realignedBAM = ABRA2.out.bam
-
-
-  // SAV_CALL per sample
-  bamBatchTag = realignedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // excl. '.bai' (not useful for sav_call)
-  refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
-  mergedInSavCall = bamBatchTag.combine(refBatchTag, by: 0)
-  
-  SAV_CALL(mergedInSavCall.map{ it[1] }, mergedInSavCall.map{ it[2] })
-  savCallSNV = SAV_CALL.out.snv_both
-  savCallSNVrev = SAV_CALL.out.snv_rev
-  savCallSNVfwd = SAV_CALL.out.snv_fwd
-  savCallIndel = SAV_CALL.out.snv_raw_indel
-  savCallbase = SAV_CALL.out.base_comp
-
-  // Group SAV_CALL outputs by batch for CALL_BATCH
-  baseFilesByBatch = savCallbase.map { meta, file -> 
-    [meta.batch_id, [meta.label ?: meta.id, file]]
-  }.groupTuple()
-
-  indelFilesByBatch = savCallIndel.map { meta, file -> 
-    [meta.batch_id, [meta.label ?: meta.id, file]]
-  }.groupTuple()
-
-  // Create batch metadata with sample labels
-  batchMeta = baseFilesByBatch.join(indelFilesByBatch).map { batch_id, base_tuples, indel_tuples ->
-    def labels = base_tuples.collect { it[0] }
-    def base_files = base_tuples.collect { it[1] }
-    def indel_files = indel_tuples.collect { it[1] }
-    def meta = [id: batch_id, labels: labels.join(',')]
-    [batch_id, meta, base_files, indel_files]
-  }
-  
-  // Combine with reference and GFF
-  gffBatchTag = refWithTransferedAnnot.map { meta, files -> 
-    [meta.id, [meta, files[1]]]
-  }
-
-  refBatchTag = inRef.map { meta, files -> 
-    [meta.id, [meta, files[0]]]
-  }
-  
-  mergedInCallBatch = batchMeta
-    .combine(refBatchTag, by: 0)
-    .combine(gffBatchTag, by: 0)
-    .map { batch_id, meta, base_files, indel_files, ref_tuple, gff_tuple ->
-      tuple(
-        tuple(meta, base_files, indel_files),
-        tuple(ref_tuple[0], ref_tuple[1]),
-        tuple(gff_tuple[0], gff_tuple[1])
-      )
+  // Transfer annotation from inputAnnot to inputRef when needed
+  // (TODO: g.inRefCoord -> c.inRefCoord for multi-coding elements)
+  inputRef
+    .map { [ it[0].id, it ] }
+    .branch {
+      reannot: it[1][1].size() == 1
+      with_own_annotation: it[1][1].size() == 2
     }
+    .set { refAnnotStatus }
+
+  // Process references needing annotation transfer
+  refAnnotStatus.reannot
+    .join(inputAnnot.map { [ it[0].id, it ] })
+    .map { batch_id, ref, annot -> [ref, annot] }
+    .set { toTransfer }
+
+  TRANSFERT_GFF(toTransfer.map { it[0] }, toTransfer.map { it[1] })
+
+  // Combine transferred annotations with references
+  toTransfer
+    .map { [ it[0][0].id, it[0] ] }
+    .join(TRANSFERT_GFF.out.transfered_gff.map { [ it[0].id, it ] })
+    .map { batch_id, ref, gff -> [ ref[0], [ ref[1][0], gff[1] ] ] }
+    .mix(refAnnotStatus.with_own_annotation.map { it[1] })
+    .set { refWithAnnot }
+
+  // Perform read mapping based on selected mapper
+  inputReads
+    .map { [ it[0].batch_id, it ] }
+    .set { readsByBatch }
+
+  if (mapper == "bowtie2") {
+    BOWTIE2_BUILD(inputRef.map { [ it[0], it[1][0] ] })
+    
+    readsByBatch
+      .combine(BOWTIE2_BUILD.out.idx.map { [ it[0].id, it ] }, by: 0)
+      .map { batch_id, reads, idx -> [reads, idx] }
+      .set { toMap }
+
+    BOWTIE2(toMap.map { it[0] }, toMap.map { it[1] })
+    rawSam = BOWTIE2.out
+  } else if (mapper == "bwa-mem") {
+    BWA_INDEX(inputRef.map { [ it[0], it[1][0] ] })
+    
+    readsByBatch
+      .combine(BWA_INDEX.out.idx.map { [ it[0].id, it ] }, by: 0)
+      .map { batch_id, reads, idx -> [reads, idx] }
+      .set { toMap }
+
+    BWA_MEM(toMap.map { it[0] }, toMap.map { it[1] })
+    rawSam = BWA_MEM.out
+  } else {
+    error "Invalid mapper: '${mapper}' (supported: 'bowtie2', 'bwa-mem')"
+  }
+
+  // Convert SAM to BAM, sort and index
+  SAM_BAM_SORT_IDX(rawSam)
+
+  // Mark duplicates
+  SAM_BAM_SORT_IDX.out.bam_bai
+    .map { [ it[0].batch_id, [ it[0], it[1] ] ] }
+    .combine(inputRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }, by: 0)
+    .map { batch_id, bam, ref -> [bam, ref] }
+    .set { toMarkDup }
+
+  PICARD_MARK_DUPLICATES(toMarkDup.map { it[0] }, toMarkDup.map { it[1] })
+
+  // Perform indel realignment
+  PICARD_MARK_DUPLICATES.out.bam_bai
+    .map { [ it[0].batch_id, it ] }
+    .combine(inputRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }, by: 0)
+    .map { batch_id, bam, ref -> [bam, ref] }
+    .set { toRealign }
+
+  ABRA2(toRealign.map { it[0] }, toRealign.map { it[1] })
+
+  // Call variants per sample
+  ABRA2.out.bam
+    .map { [ it[0].batch_id, [ it[0], it[1] ] ] }
+    .combine(inputRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }, by: 0)
+    .map { batch_id, bam, ref -> [bam, ref] }
+    .set { toCallVariants }
+
+  SAV_CALL(toCallVariants.map { it[0] }, toCallVariants.map { it[1] })
+
+  // Store variant calling outputs
+  savCallSnv = SAV_CALL.out.snv_both
+  savCallSnvRev = SAV_CALL.out.snv_rev
+  savCallSnvFwd = SAV_CALL.out.snv_fwd
+  savCallIndel = SAV_CALL.out.snv_raw_indel
+  savCallBase = SAV_CALL.out.base_comp
+
+  // Prepare batch variant calling inputs
+  savCallBase
+    .map { meta, file -> [meta.batch_id, [meta.label ?: meta.id, file]] }
+    .groupTuple()
+    .join(
+      SAV_CALL.out.snv_raw_indel
+        .map { meta, file -> [meta.batch_id, [meta.label ?: meta.id, file]] }
+        .groupTuple()
+    )
+    .map { batch_id, base_tuples, indel_tuples ->
+      def meta = [
+        id: batch_id,
+        labels: base_tuples.collect { it[0] }.join(',')
+      ]
+      [
+        batch_id,
+        [meta, base_tuples.collect { it[1] }, indel_tuples.collect { it[1] }]
+      ]
+    }
+    .combine(inputRef.map { [it[0].id, [it[0], it[1][0]]] }, by: 0)
+    .combine(refWithAnnot.map { [it[0].id, [it[0], it[1][1]]] }, by: 0)
+    .map { batch_id, batch_data, ref_data, gff_data ->
+      [batch_data, ref_data, gff_data]
+    }
+    .set { toCallBatch }
+
   // Run batch variant calling
   CALL_BATCH(
-    mergedInCallBatch.map { it[0] },
-    mergedInCallBatch.map { it[1] },
-    mergedInCallBatch.map { it[2] }
+    toCallBatch.map { it[0] },
+    toCallBatch.map { it[1] },
+    toCallBatch.map { it[2] }
   )
 
-  emit:   // conserve meta in emit ??
-  sav_call_snv = savCallSNV
-  sav_call_snv_rev = savCallSNVrev
-  sav_call_snv_fwd = savCallSNVfwd
-  sav_call_snv_indel = savCallIndel
-  sav_call_snv_base = savCallbase
+  emit:
+  // Per-sample outputs
+  savCallSnv = SAV_CALL.out.snv_both
+  savCallSnvRev = SAV_CALL.out.snv_rev
+  savCallSnvFwd = SAV_CALL.out.snv_fwd
+  savCallIndel = SAV_CALL.out.snv_raw_indel
+  savCallBase = SAV_CALL.out.base_comp
+  
+  // Batch-level outputs
   variants = CALL_BATCH.out.variants
   vcf = CALL_BATCH.out.vcf
   proteins = CALL_BATCH.out.proteins
-  transfered_gff = refWithTransferedAnnot.map { it[1][1] }
-  psa_algn = TRANSFERT_GFF.out.psa
+  
+  // Additional outputs
+  transferedGff = refWithAnnot.map { it[1][1] }
+  psaAlign = TRANSFERT_GFF.out.psa
   flagstat = SAM_BAM_SORT_IDX.out.flagstat
-  aln_bam = realignedBAM
+  alignedBam = ABRA2.out.bam
 }
