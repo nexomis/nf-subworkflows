@@ -12,6 +12,7 @@ include { SAM_BAM_SORT_IDX } from '../../process/samtools/convert-sort-index/mai
 include { PICARD_MARK_DUPLICATES } from '../../process/picard_tools/markduplicates/main.nf'
 include { ABRA2 } from '../../process/abra2/main.nf'
 include { SAV_CALL } from '../../process/sav_call/main.nf'
+include { CALL_BATCH } from '../../process/sav_call/call_batch/main.nf'
 include { checkMeta } from '../utils.nf'
 
 workflow VIRAL_VARIANT {
@@ -142,7 +143,7 @@ workflow VIRAL_VARIANT {
   realignedBAM = ABRA2.out.bam
 
 
-  // SAV_CALL
+  // SAV_CALL per sample
   bamBatchTag = realignedBAM.map { [ it[0].batch_id, [ it[0], it[1] ] ] }  // excl. '.bai' (not useful for sav_call)
   refBatchTag = inRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }
   mergedInSavCall = bamBatchTag.combine(refBatchTag, by: 0)
@@ -154,15 +155,61 @@ workflow VIRAL_VARIANT {
   savCallIndel = SAV_CALL.out.snv_raw_indel
   savCallbase = SAV_CALL.out.base_comp
 
+  // Group SAV_CALL outputs by batch for CALL_BATCH
+  baseFilesByBatch = savCallbase.map { meta, file -> 
+    [meta.batch_id, [meta.label ?: meta.id, file]]
+  }.groupTuple()
+
+  indelFilesByBatch = savCallIndel.map { meta, file -> 
+    [meta.batch_id, [meta.label ?: meta.id, file]]
+  }.groupTuple()
+
+  // Create batch metadata with sample labels
+  batchMeta = baseFilesByBatch.join(indelFilesByBatch).map { batch_id, base_tuples, indel_tuples ->
+    def labels = base_tuples.collect { it[0] }
+    def base_files = base_tuples.collect { it[1] }
+    def indel_files = indel_tuples.collect { it[1] }
+    def meta = [id: batch_id, labels: labels.join(',')]
+    [batch_id, meta, base_files, indel_files]
+  }
+  
+  // Combine with reference and GFF
+  gffBatchTag = refWithTransferedAnnot.map { meta, files -> 
+    [meta.id, [meta, files[1]]]
+  }
+
+  refBatchTag = inRef.map { meta, files -> 
+    [meta.id, [meta, files[0]]]
+  }
+  
+  mergedInCallBatch = batchMeta
+    .combine(refBatchTag, by: 0)
+    .combine(gffBatchTag, by: 0)
+    .map { batch_id, meta, base_files, indel_files, ref_tuple, gff_tuple ->
+      tuple(
+        tuple(meta, base_files, indel_files),
+        tuple(ref_tuple[0], ref_tuple[1]),
+        tuple(gff_tuple[0], gff_tuple[1])
+      )
+    }
+  // Run batch variant calling
+  CALL_BATCH(
+    mergedInCallBatch.map { it[0] },
+    mergedInCallBatch.map { it[1] },
+    mergedInCallBatch.map { it[2] }
+  )
+
   emit:   // conserve meta in emit ??
   sav_call_snv = savCallSNV
   sav_call_snv_rev = savCallSNVrev
   sav_call_snv_fwd = savCallSNVfwd
   sav_call_snv_indel = savCallIndel
   sav_call_snv_base = savCallbase
+  variants = CALL_BATCH.out.variants
+  vcf = CALL_BATCH.out.vcf
+  proteins = CALL_BATCH.out.proteins
   transfered_gff = refWithTransferedAnnot.map { it[1][1] }
   psa_algn = TRANSFERT_GFF.out.psa
   flagstat = SAM_BAM_SORT_IDX.out.flagstat
   aln_bam = realignedBAM
 }
-
