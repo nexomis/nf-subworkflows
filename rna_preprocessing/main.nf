@@ -1,15 +1,35 @@
 include { SPRING_DECOMPRESS } from '../../../modules/process/spring/decompress/main.nf'
 include { KALLISTO_QUANT } from '../../../modules/process/kallisto/quant/main.nf'
+include { checkMeta } from '../utils.nf'
 
 workflow RNA_PREPROCESSING {
     take:
     inputs          // channel: [ meta, reads ]
-    kallisto_idx    // channel: [meta, path(kallisto_idx)]
-    multiqc_yml     // channel: path(multiqc_yml)
+    kallistoIdx    // channel: [meta, path(kallisto_idx)]
+    multiqcYml     // channel: path(multiqc_yml)
 
     main:
+
+    def expectedMeta = [
+        "kallisto_idx": ["String", "NullObject"]
+    ]
+
+
+    inputs.map { checkMeta(it, expectedMeta) }
+    kallistoIdx.map { checkMeta(it) }
+
+    inputs
+    | map { [it[0].kallisto_idx, it] }
+    | combine(kallistoIdx.map({ [it[0].id, it] }), by:0)
+    | map {
+        def reads = it[1]
+        def kallisto_idx = it[2]
+        return [reads, kallisto_idx]
+    }
+    | set { kallistoInput }    
+
     // Kallisto quantification
-    KALLISTO_QUANT(inputs, kallisto_idx)
+    KALLISTO_QUANT(kallistoInput.map{ it[0] }, kallistoInput.map{ it[1] })
 
     // MultiQC report
     KALLISTO_QUANT.out.log
@@ -17,7 +37,7 @@ workflow RNA_PREPROCESSING {
     | collect
     | set { kallistoLogs }
 
-    ALIGN_MULTIQC(kallistoLogs, multiqc_yml)
+    ALIGN_MULTIQC(kallistoLogs, multiqcYml)
 
     emit:
     kallisto_h5 = KALLISTO_QUANT.out.h5    // channel: [ meta, quant ]
