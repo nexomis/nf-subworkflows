@@ -1,0 +1,34 @@
+module_order:
+  - kallisto:
+      name: 'Kallisto'
+      anchor: "kallisto"
+      info: "This section of the report shows kallisto quantification results."
+      path_filters:
+        - 'kallisto_logs/*.log'
+  - salmon:
+      name: 'Salmon'
+      anchor: "salmon"
+      info: "This section of the report shows salmon quantification results."
+      path_filters:
+        - 'salmon_logs/*'
+        - 'salmon_logs/aux_info/*'
+        - 'salmon_logs/libParams/*'
+skip_versions_section: true
+use_filename_as_sample_name:
+  - kallisto
+  - salmon/meta
+  - salmon/fld
+  - salmon/lfc
+
+extra_fn_clean_exts:
+  - ".meta_info.json"
+  - ".flenDist.txt"
+  - ".lib_format_counts.json"
+
+sp:
+  salmon/meta:
+    fn: "*.meta_info.json"
+  salmon/fld:
+    fn: "*.flenDist.txt"
+  salmon/lfc:
+    fn: "*.lib_format_counts.json"

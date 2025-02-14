@@ -7,7 +7,6 @@ workflow RNA_PREPROCESSING {
     take:
     inputs          // channel: [ meta, reads ]
     reference       // channel: [meta, path(reference)]
-    multiqcYml     // channel: path(multiqc_yml)
 
     main:
 
@@ -17,6 +16,10 @@ workflow RNA_PREPROCESSING {
 
     inputs.map { checkMeta(it, expectedMeta) }
     reference.map { checkMeta(it) }
+
+
+    Channel.fromPath(moduleDir + "/multiqc.yml")
+    | set {multiqcYml}
 
     inputs
     | map { [it[0].reference, it] }
@@ -71,7 +74,7 @@ workflow RNA_PREPROCESSING {
 }
 
 process ALIGN_MULTIQC {
-    container 'multiqc/multiqc:v1.21' // version above are bugged
+    container 'multiqc/multiqc:v1.27.1' // version above are bugged
 
     label 'cpu_x1'
     label 'mem_8G'
@@ -87,8 +90,16 @@ process ALIGN_MULTIQC {
     script:
     """
     #!/usr/bin/bash
+
     mkdir -p salmon_logs/aux_info
-    mv salmon_logs/*meta_info.json salmon_logs/aux_info/
+    mkdir -p salmon_logs/libParams
+    
+    for file in \$(ls salmon_logs/ | grep meta_info.json); do
+        ln -s \$PWD/salmon_logs/\$file \$PWD/salmon_logs/aux_info/\$file
+    done
+    for file in \$(ls salmon_logs | grep flenDist.txt); do
+        ln -s \$PWD/salmon_logs/\$file \$PWD/salmon_logs/libParams/\$file
+    done
 
     multiqc -c $conf_yml --no-data-dir -n align_multiqc.html .
     """
