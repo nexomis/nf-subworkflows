@@ -17,29 +17,45 @@ single: [sample_name [file R1]]
 
 */
 
+def listFilesRecurse(_dir, _depth) {
+  def files = []
+  _dir.listFiles().each { _file -> 
+      if (_file.isDirectory()) {
+        if (_depth > 0) {
+          listFilesRecurse(_file, _depth - 1).each { subfile ->
+            files << subfile
+          }
+        }
+      } else {
+        files << _file
+    }
+  }
+  return files
+}
+
 workflow PARSE_SEQ_DIR {
   take:
-  inputDir
+  inputDir // [meta, path_dir] where meta can contain depth
 
   main:
 
   inputDir.flatMap {
+    def dir = it[1]
+    def depth = 0
+    if (it[0].depth) {
+      depth = it[0].depth
+    }
     def files = []
     def list2return = []
     def names = []
     def samplesToKeep = []
     // iterate through it.listFiles()
-    if (it instanceof Path) {
-      it.listFiles().each { file ->
-        names.add(file.getName())
-        files.add(file)
-      }
-    } else {
-      it[0].listFiles().each { file ->
-        names.add(file.getName())
-        files.add(file)
-      }
-      samplesToKeep = it[1]
+    listFilesRecurse(dir, depth).each { file ->
+      names.add(file.getName())
+      files.add(file)
+    }
+    if (it[0].samplesToKeep) {
+      samplesToKeep = it[0].samplesToKeep
     }
     
     def layout = ""
