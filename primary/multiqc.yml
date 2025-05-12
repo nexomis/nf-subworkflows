@@ -1,10 +1,10 @@
 module_order:
-  - fastp:
-      name: 'Trimming (Fastp)'
-      anchor: "fastp"
-      info: "This section of the report shows trimming results using fastp."
+  - cutadapt:
+      name: 'Trimming (Cutadapt)'
+      anchor: "cutadapt"
+      info: "This section of the report shows trimming results using Cutadapt."
       path_filters:
-        - '*.json'
+        - '*.cutadapt.json'
   - fastqc:
       name: 'FastQC (Trimmed)'
       anchor: "fastqc_trimmed"
@@ -28,7 +28,7 @@ report_section_order:
     before: fastqc_raw
 use_filename_as_sample_name:
   - kraken
-  - fastp
+  - cutadapt
   - fastqc
 skip_versions_section: true
 table_columns_name:
@@ -46,4 +46,3 @@ table_columns_name:
     median_sequence_length: "Med Length (Trimmed)"
     percent_fails: "% Fails (Trimmed)"
     total_sequences: "# Seqs (Trimmed)"
-
