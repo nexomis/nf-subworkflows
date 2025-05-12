@@ -1,5 +1,5 @@
 // process include
-include { FASTP } from '../../process/fastp/main.nf'
+include { CUTADAPT } from '../../process/cutadapt/main.nf'
 include { KRAKEN2 } from '../../process/kraken2/main.nf'
 include { RECENTRIFUGE } from '../../process/recentrifuge/main.nf'
 include { SEQTK_SAMPLE as SEQTK_SAMPLE_RAW; SEQTK_SAMPLE as SEQTK_SAMPLE_TRIMMED } from '../../process/seqtk/sample/main.nf'
@@ -7,7 +7,7 @@ include { SLIMFASTQ_DECOMPRESS } from '../../process/slimfastq/decompress/main.n
 include { FASTQC as FASTQC_RAW; FASTQC as FASTQC_TRIMMED } from '../../process/fastqc/main.nf'
 
 process PRIMARY_MULTIQC {
-  container 'multiqc/multiqc:v1.21' // version above are bugged
+  container 'multiqc/multiqc:v1.28'
 
   label 'cpu_x1'
   label 'mem_8G'
@@ -16,7 +16,7 @@ process PRIMARY_MULTIQC {
   path raw_zips, stageAs: 'raw/*', arity: '1..*'
   path trimmed_zips, stageAs: 'trimmed/*', arity: '1..*'
   path kraken2_reports, arity: '1..*'
-  path fastp_reports, arity: '1..*'
+  path cutadapt_reports, arity: '1..*'
   path conf_yml, arity: 1, stageAs: "multiqc_config.yaml"
 
   output:
@@ -69,9 +69,9 @@ workflow PRIMARY {
   | set { inputFastq }
 
 
-  FASTP(inputFastq)
+  CUTADAPT(inputFastq)
 
-  trimmedReads = FASTP.out.reads
+  trimmedReads = CUTADAPT.out.reads
 
   SEQTK_SAMPLE_RAW(inputFastq, numReads)
   | set {subInputFastq}
@@ -95,10 +95,10 @@ workflow PRIMARY {
   | collect
   | set {fastqcTrimmed}
 
-  FASTP.out.report  
+  CUTADAPT.out.report_json
   | map {it[1]}
   | collect
-  | set {fastpReports}
+  | set {cutadaptReports}
 
   KRAKEN2(
     subTrimmedReads,
@@ -121,7 +121,7 @@ workflow PRIMARY {
     fastqcRaw,
     fastqcTrimmed,
     kraken2Reports,
-    fastpReports,
+    cutadaptReports,
     multiqcYml
   )
 
