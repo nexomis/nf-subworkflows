@@ -17,7 +17,7 @@ single: [sample_name [file R1]]
 
 */
 
-include { listFilesRecurse; parseFilename; detectLayout; groupFilesBySample } from '../functions'
+include { listFilesRecurse; parseFilename; detectLayout; groupFilesBySample } from './functions'
 
 workflow PARSE_SEQ_DIR {
   take:
@@ -64,17 +64,19 @@ workflow PARSE_SEQ_DIR {
       if (samplesToKeep.size() == 0 || samplesToKeep.contains(group.sampleName)) {
         if (group.layout == "PE") {
           // For paired-end, return tuple with sample metadata and both files
-          def fileList = group.files.collect { file(it.file.toString()) }
+          // Use original file objects to preserve S3 properties
+          def fileList = group.files.collect { it.file }
           results.add(tuple(
             ["id": group.sampleName, "read_type": group.layout],
             fileList
           ))
         } else {
           // For single-end, return each file separately
+          // Use original file objects to preserve S3 properties
           group.files.each { parsedFile ->
             results.add(tuple(
               ["id": group.sampleName, "read_type": group.layout],
-              [file(parsedFile.file.toString())]
+              [parsedFile.file]
             ))
           }
         }

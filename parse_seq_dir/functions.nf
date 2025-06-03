@@ -49,6 +49,9 @@ def parseFilename(filename, parsingArgs = [:]) {
     def extension = extensionMatch.group(1)
     fileType = extension.toLowerCase().contains(".sfq") ? "sfq" : "fastq"
     workingName = workingName.substring(0, extensionMatch.start())
+  } else {
+    // If no valid sequence file extension is found, return null to filter out the file
+    return null
   }
   
   // Step 2: Remove eventual tail (default: "_\d{3}$")
