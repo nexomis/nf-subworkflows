@@ -5,8 +5,8 @@
 def listFilesRecurse(_dir, _depth) {
   def files = []
   
-  // Convert to File if it's a Path
-  def dir = _dir instanceof java.nio.file.Path ? _dir.toFile() : _dir
+  // Handle both local paths and S3 paths using Nextflow's file() function
+  def dir = file(_dir)
   
   if (dir.exists() && dir.isDirectory()) {
     dir.listFiles().each { _file -> 
