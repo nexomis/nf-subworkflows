@@ -78,7 +78,7 @@ workflow VIRAL_VARIANT {
   // Process references needing annotation transfer
   refAnnotStatus.reannot
   | join(inputAnnot.map { [ it[0].id, it ] })
-  | map { batch_id, ref, annot -> [ref, annot] }
+  | map { _batch_id, ref, annot -> [ref, annot] }
   | set { toTransfer }
 
   TRANSFERT_GFF(toTransfer.map { it[0] }, toTransfer.map { it[1] })
@@ -87,7 +87,7 @@ workflow VIRAL_VARIANT {
   toTransfer
   | map { [ it[0][0].id, it[0] ] }
   | join(TRANSFERT_GFF.out.transfered_gff.map { [ it[0].id, it ] })
-  | map { batch_id, ref, gff -> [ ref[0], [ ref[1][0], gff[1] ] ] }
+  | map { _batch_id, ref, gff -> [ ref[0], [ ref[1][0], gff[1] ] ] }
   | mix(refAnnotStatus.with_own_annotation.map { it[1] })
   | set { refWithAnnot }
 
@@ -101,7 +101,7 @@ workflow VIRAL_VARIANT {
     
     readsByBatch
     | combine(BOWTIE2_BUILD.out.idx.map { [ it[0].id, it ] }, by: 0)
-    | map { batch_id, reads, idx -> [reads, idx] }
+    | map { _batch_id, reads, idx -> [reads, idx] }
     | set { toMap }
 
     BOWTIE2(toMap.map { it[0] }, toMap.map { it[1] })
@@ -111,7 +111,7 @@ workflow VIRAL_VARIANT {
     
     readsByBatch
     | combine(BWA_INDEX.out.idx.map { [ it[0].id, it ] }, by: 0)
-    | map { batch_id, reads, idx -> [reads, idx] }
+    | map { _batch_id, reads, idx -> [reads, idx] }
     | set { toMap }
 
     BWA_MEM(toMap.map { it[0] }, toMap.map { it[1] })
@@ -127,7 +127,7 @@ workflow VIRAL_VARIANT {
   SAM_BAM_SORT_IDX.out.bam_bai
   | map { [ it[0].batch_id, [ it[0], it[1] ] ] }
   | combine(inputRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }, by: 0)
-  | map { batch_id, bam, ref -> [bam, ref] }
+  | map { _batch_id, bam, ref -> [bam, ref] }
   | set { toMarkDup }
 
   PICARD_MARK_DUPLICATES(toMarkDup.map { it[0] }, toMarkDup.map { it[1] })
@@ -136,7 +136,7 @@ workflow VIRAL_VARIANT {
   PICARD_MARK_DUPLICATES.out.bam_bai
   | map { [ it[0].batch_id, it ] }
   | combine(inputRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }, by: 0)
-  | map { batch_id, bam, ref -> [bam, ref] }
+  | map { _batch_id, bam, ref -> [bam, ref] }
   | set { toRealign }
 
   ABRA2(toRealign.map { it[0] }, toRealign.map { it[1] })
@@ -145,7 +145,7 @@ workflow VIRAL_VARIANT {
   ABRA2.out.bam
   | map { [ it[0].batch_id, [ it[0], it[1] ] ] }
   | combine(inputRef.map { [ it[0].id, [ it[0], it[1][0] ] ] }, by: 0)
-  | map { batch_id, bam, ref -> [bam, ref] }
+  | map { _batch_id, bam, ref -> [bam, ref] }
   | set { toCallVariants }
 
   SAV_CALL(toCallVariants.map { it[0] }, toCallVariants.map { it[1] })
@@ -171,7 +171,7 @@ workflow VIRAL_VARIANT {
   }
   | combine(inputRef.map { [it[0].id, [it[0], it[1][0]]] }, by: 0)
   | combine(refWithAnnot.map { [it[0].id, [it[0], it[1][1]]] }, by: 0)
-  | map { batch_id, batch_data, ref_data, gff_data ->
+  | map { _batch_id, batch_data, ref_data, gff_data ->
     [batch_data, ref_data, gff_data]
   }
   | set { toCallBatch }

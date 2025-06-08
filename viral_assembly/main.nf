@@ -1,5 +1,15 @@
-// include - process
+// ============================================================================
+// VIRAL ASSEMBLY WORKFLOW
+// ============================================================================
+// This workflow performs viral genome assembly from sequencing reads using:
+// 1. Read preprocessing and deduplication
+// 2. Anchor-based read selection
+// 3. Taxonomic classification and filtering
+// 4. De novo assembly with SPAdes
+// 5. Post-assembly scaffolding (ABACAS) and annotation (HANNOT)
+// 6. Quality assessment with QUAST
 
+// Process imports - organized by functionality
 include { FASTP_DEDUP } from '../../process/fastp/dedup/main.nf'
 include { BOWTIE2_BUILD as BT2_BUILD; BOWTIE2_BUILD as BT2_BUILD_ANCHOR } from '../../process/bowtie2/bowtie2-build/main.nf'
 include { BOWTIE2 as BT2; BOWTIE2 as BT2_ANCHOR } from '../../process/bowtie2/mapping/main.nf'
@@ -18,15 +28,16 @@ include { checkMeta } from '../utils.nf'
 
 def nullifyEmptyFasta(fasta_file){
   def char_count = 0
-  for (line in fasta_file.readLines()) {
-    if (!line.startsWith(">")) {
+  def found_enough = false
+  fasta_file.readLines().each { line ->
+    if (!found_enough && !line.startsWith(">")) {
       char_count += line.trim().length()
       if (char_count > 500) {
-        return fasta_file
+        found_enough = true
       }
     }
   }
-  return null
+  return found_enough ? fasta_file : null
 }
 
 workflow VIRAL_ASSEMBLY {
@@ -40,6 +51,10 @@ workflow VIRAL_ASSEMBLY {
 
   main:
 
+  // ============================================================================
+  // METADATA VALIDATION
+  // ============================================================================
+  // Define expected metadata fields and their types for input validation
   def expectedMeta = [
       "ref_id": ["String", "NullObject"],
       "anchor_id": ["String", "NullObject"],
@@ -52,14 +67,18 @@ workflow VIRAL_ASSEMBLY {
       "keep_before_dedup": ["String"]
   ]
 
-  // Validate metadata
-  inputReads.map { checkMeta(it, expectedMeta) }
-  inputK2Index.map { checkMeta(it) }
-  inputRefGenome.map { checkMeta(it) }
-  anchorsFasta.map { checkMeta(it) }
-  protFasta.map { checkMeta(it) }
+  // Validate metadata for all input channels
+  inputReads.map { it -> checkMeta(it, expectedMeta) }
+  inputK2Index.map { it -> checkMeta(it) }
+  inputRefGenome.map { it -> checkMeta(it) }
+  anchorsFasta.map { it -> checkMeta(it) }
+  protFasta.map { it -> checkMeta(it) }
 
-  sepRefGenome = inputRefGenome.branch {
+  // ============================================================================
+  // REFERENCE GENOME AND ANCHOR SEQUENCE PREPARATION
+  // ============================================================================
+  // Handle compressed reference genomes - decompress if needed
+  sepRefGenome = inputRefGenome.branch { it -> 
     gzip: ["gz","gzip","z"].contains(it[1].getExtension().toLowerCase())
     other: true
   }
@@ -68,7 +87,8 @@ workflow VIRAL_ASSEMBLY {
   | concat(sepRefGenome.other)
   | set {faRefGenome}
 
-  sepAnchors = anchorsFasta.branch {
+  // Handle compressed anchor sequences - decompress if needed
+  sepAnchors = anchorsFasta.branch { it -> 
     gzip: ["gz","gzip","z"].contains(it[1].getExtension().toLowerCase())
     other: true
   }
@@ -77,49 +97,72 @@ workflow VIRAL_ASSEMBLY {
   | concat(sepAnchors.other)
   | set {faAnchors}
 
+  // Build Bowtie2 index for anchor sequences (used for read selection)
   anchorsBt2Index = BT2_BUILD_ANCHOR(faAnchors)
 
+  // ============================================================================
+  // READ PROCESSING PRE-ANNOTATION
+  // ============================================================================
+  // Decompress reads and set up tracking IDs
   UNSPRING_READS(inputReads)
   UNSPRING_READS.out
-  | map {
-    new_meta = it[0].clone()
-    new_meta.reads_id = "${new_meta.id}" // reads id definitoin
-    new_meta.assembly_id = "${new_meta.reads_id}" // Assembly ID definition
+  | map { it ->
+    def new_meta = it[0].clone()
+    new_meta.reads_id = "${new_meta.id}" // Unique identifier for this read set
+    new_meta.assembly_id = "${new_meta.reads_id}" // Base assembly identifier
     return [new_meta, it[1]]
   }
   | set { allFastq }
 
+  // ============================================================================
+  // ANCHOR-BASED SELECTION
+  // ============================================================================
+  // Map reads to anchor sequences (if anchor_id is specified)
+  // This helps select reads that are likely from the target viral genome
   allFastq
-  | map {[it[0].anchor_id, it]}
-  | filter {it[0]}
-  | combine(anchorsBt2Index.map {[it[0].id, it]}, by:0)
+  | map { it ->[it[0].anchor_id, it]}
+  | filter { it -> it[0]} // Only process samples with anchor_id
+  | combine(anchorsBt2Index.map { it ->[it[0].id, it]}, by:0)
   | set {joinInputforBt2Anchors}
 
-  BT2_ANCHOR(joinInputforBt2Anchors.map{it[1]}, joinInputforBt2Anchors.map{it[2]})
+  BT2_ANCHOR(joinInputforBt2Anchors.map{ it -> it[1]}, joinInputforBt2Anchors.map{ it -> it[2]})
   | SORT_ANCHOR
 
-  EXTRACT_MAPPED_FASTQ(SORT_ANCHOR.out.bam_bai.map{[it[0], it[1]]})
+  // Extract reads that mapped to anchors (target viral reads) and unmapped reads
+  EXTRACT_MAPPED_FASTQ(SORT_ANCHOR.out.bam_bai.map{ it -> [it[0], it[1]]})
 
-  // Start Remove Duplicates Before Assembly
+  // ============================================================================
+  // TAXONOMIC CLASSIFICATION AND READ FILTERING
+  // ============================================================================
+  // Combine unmapped reads from anchor mapping with reads that had no anchor
   EXTRACT_MAPPED_FASTQ.out.unmapped
-  | concat(allFastq.filter{!(it[0].anchor_id && it[0].anchor_id != "")})
+  | concat(allFastq.filter{ it -> !(it[0].anchor_id && it[0].anchor_id != "")})
   | set {inputForClassification}
 
+  // Remove host/contaminant reads using iterative Kraken2 classification
   inputReadsUnclassified = ITERATIVE_UNCLASSIFIED_READS_EXTRACTION(inputForClassification, inputK2Index)
 
+  // ============================================================================
+  // MERGE ANCHOR-MAPPED READS WITH UNCLASSIFIED READS
+  // ============================================================================
+  // For samples with anchors: combine anchor-mapped reads with unclassified reads
   inputReadsUnclassified
-  | filter {it[0].anchor_id && it[0].anchor_id != ""}
-  | map {[it[0].id, it]}
-  | combine(EXTRACT_MAPPED_FASTQ.out.mapped.map{[it[0].id, it]}, by:0)
+  | filter { it -> it[0].anchor_id && it[0].anchor_id != ""}
+  | map { it ->[it[0].id, it]}
+  | combine(EXTRACT_MAPPED_FASTQ.out.mapped.map{ it -> [it[0].id, it]}, by:0)
   | set {joinInputForConcat}
 
-  CONCAT_FQ(joinInputForConcat.map{it[1]}, joinInputForConcat.map{it[2]})
-  | concat(inputReadsUnclassified.filter{!(it[0].anchor_id && it[0].anchor_id != "")})
+  CONCAT_FQ(joinInputForConcat.map{ it -> it[1]}, joinInputForConcat.map{ it -> it[2]})
+  | concat(inputReadsUnclassified.filter{ it -> !(it[0].anchor_id && it[0].anchor_id != "")})
   | set {inputReadsAfterSelection}
 
-  inputReadsAfterSelection.filter{ it[0].dedup == "yes" }
-  | map { 
-    new_meta = it[0].clone()
+  // ============================================================================
+  // OPTIONAL DEDUPLICATION
+  // ============================================================================
+  // Process reads for deduplication if requested
+  inputReadsAfterSelection.filter{ it -> it[0].dedup == "yes" }
+  | map { it -> 
+    def new_meta = it[0].clone()
     new_meta.reads_id = "${new_meta.reads_id}_dedup"
     new_meta.assembly_id = "${new_meta.reads_id}"
     return [new_meta, it[1]]
@@ -128,16 +171,20 @@ workflow VIRAL_ASSEMBLY {
 
   dedupReads = FASTP_DEDUP(readsForDedup).reads
 
-  inputReadsAfterSelection.filter{ 
+  // Keep reads that don't need deduplication or should be kept before dedup
+  inputReadsAfterSelection.filter{ it -> 
   (it[0].dedup == "no") || ((it[0].dedup == "yes") && (it[0].keep_before_dedup == "yes"))
   }
   | set { notDedupReadsToKeep }
 
+  // Create separate channels for assembly (deduplicated) and mapping (original)
   mergedForAssembly = notDedupReadsToKeep.concat(dedupReads)
-  mergedForMapping = notDedupReadsToKeep.concat(readsForDedup) // dedup reads only for assembly
+  mergedForMapping = notDedupReadsToKeep.concat(readsForDedup) // Use original reads for mapping
 
-  // END Remove Duplicates Before Assembly
-
+  // ============================================================================
+  // DE NOVO ASSEMBLY WITH SPADES
+  // ============================================================================
+  // Expand assembler parameters and prepare for multiple assembly strategies
   mergedForAssembly 
   | flatMap { item ->
     def meta = item[0]
@@ -149,10 +196,10 @@ workflow VIRAL_ASSEMBLY {
         [new_meta, files]
     }
   }
-  | branch {
+  | branch { it -> 
       spades: (it[0].assembler.startsWith("spades_"))
         def new_meta = it[0].clone()
-        new_meta.args_spades = "${new_meta.assembler}".replace("spades_", "--")
+        new_meta.args_spades = "${new_meta.assembler}".replace("spades_", "--") // Convert to SPAdes arguments
         new_meta.assembly_id = "${new_meta.assembly_id}_${new_meta.assembler}"
         new_meta.label = "${new_meta.assembly_id}"
         return [new_meta, it[1]]
@@ -162,20 +209,25 @@ workflow VIRAL_ASSEMBLY {
 
   SPADES(inputForAssembly.spades)
 
+  // Filter out empty or insufficient assemblies
   SPADES.out.scaffolds
-  | map {
+  | map { it ->
     def new_file = nullifyEmptyFasta(it[1])
     return [it[0].clone(), new_file] 
   }
-  | filter { it[1] }
+  | filter { it ->  it[1] } // Remove null (empty) assemblies
   | set { scaffolds }
 
+  // ============================================================================
+  // POST-ASSEMBLY SCAFFOLDING WITH ABACAS
+  // ============================================================================
+  // ABACAS orders and orients contigs against a reference genome
   scaffolds
-  | filter { it[0].do_abacas == "yes" }
-  | map {[it[0].ref_id, it]}
-  | filter { it[0] }
-  | combine(faRefGenome.map {[it[0].id, it]}, by:0)
-  | map {
+  | filter { it ->  it[0].do_abacas == "yes" }
+  | map { it ->[it[0].ref_id, it]}
+  | filter { it ->  it[0] } // Only process if ref_id is specified
+  | combine(faRefGenome.map { it ->[it[0].id, it]}, by:0)
+  | map { it ->
       def new_meta = it[1][0].clone()
       new_meta.assembly_id = "${new_meta.assembly_id}_abacas"
       new_meta.label = "${new_meta.assembly_id}"
@@ -183,83 +235,102 @@ workflow VIRAL_ASSEMBLY {
   }
   | set { joinInputForAbacas }
 
-  // TODO SELECT BIGGER SCAFFOLD FOR NO_ABACAS ?? What about multi segment ?
+  // TODO: SELECT BIGGER SCAFFOLD FOR NO_ABACAS ?? What about multi segment ?
 
-  ABACAS(joinInputForAbacas.map {it[1]}, joinInputForAbacas.map {it[2]})
+  ABACAS(joinInputForAbacas.map { it -> it[1]}, joinInputForAbacas.map { it ->  it[2]})
 
-  ABACAS.out // process to extract the number of 
-  | map {
+  // Filter out empty ABACAS results and combine with non-ABACAS scaffolds
+  ABACAS.out
+  | map { it ->
     def new_meta = it[0].clone()
     def new_file = nullifyEmptyFasta(it[1])
     return [new_meta, new_file]
   }
-  | filter { it[1] } // remove empty abacas
+  | filter { it ->  it[1] } // Remove empty ABACAS results
   | concat(
-      scaffolds.filter{ 
+      scaffolds.filter{ it -> 
         it[0].keep_before_abacas == "yes" || it[0].do_abacas != "yes" 
       }
     )
   | set {afterAbacasScaffolds}
 
+  // ============================================================================
+  // VIRAL ANNOTATION WITH HANNOT
+  // ============================================================================
+  // HANNOT performs homology-based annotation using protein databases
   HANNOT(
-    afterAbacasScaffolds.filter{it[0].proteome_id != ""}.map{
-      new_meta = it[0].clone()
+    afterAbacasScaffolds.filter{ it -> it[0].proteome_id != ""}.map{ it -> 
+      def new_meta = it[0].clone()
       new_meta.assembly_id = "${new_meta.assembly_id}_hannot"
       new_meta.label = "${new_meta.assembly_id}"
       return [new_meta, it[1]]
     }, protFasta)
 
+  // Filter out empty HANNOT results and combine with non-annotated scaffolds
   HANNOT.out.genome
-  | map {
+  | map { it ->
     def new_meta = it[0].clone()
     def new_file = nullifyEmptyFasta(it[1])
     return [new_meta, new_file]
   }
-  | filter { it[1] } // remove empty
+  | filter { it ->  it[1] } // Remove empty annotation results
   | concat(
-      afterAbacasScaffolds.filter{
+      afterAbacasScaffolds.filter{ it -> 
         it[0].keep_before_hannot == "yes" || it[0].proteome_id == "" 
       }
     )
   | set {finalScaffolds}
 
-  // mapping (with index building and bam sorting)
-  
+  // ============================================================================
+  // READ MAPPING AND QUALITY ASSESSMENT
+  // ============================================================================
+  // Map reads back to final assemblies for quality assessment (if realign=yes)
   finalScaffolds
-  | filter { it[0].realign == "yes" }
+  | filter { it ->  it[0].realign == "yes" }
   | set { toRealignScaffolds }
 
+  // Build Bowtie2 indices for final assemblies
   BT2_BUILD(toRealignScaffolds)
   BT2_BUILD.out.idx
   | set { bwtIdx }
 
-  mergedForMapping.map {[it[0].id, it]}
-  | combine(bwtIdx.map {[it[0].id, it]}, by:0) // merge with id (not dedup)
-  | map {[[it[2][0], it[1][1]], it[2]]}
-  | map {
+  // Combine reads with corresponding assembly indices for mapping
+  mergedForMapping.map { it ->[it[0].id, it]}
+  | combine(bwtIdx.map { it ->[it[0].id, it]}, by:0) // Merge by original sample ID
+  | map { it ->[[it[2][0], it[1][1]], it[2]]}
+  | map { it ->
       def new_meta = it[0][0].clone()
       new_meta.label = "${new_meta.assembly_id}"
       return [[new_meta, it[0][1]], it[1]]
   }
   | set {joinInputforBt2}
 
-  BT2(joinInputforBt2.map {it[0]},joinInputforBt2.map {it[1]})
+  // Map reads to assemblies and convert to sorted BAM
+  BT2(joinInputforBt2.map { it ->it[0]},joinInputforBt2.map { it ->it[1]})
 
   rawSAM = BT2.out
   SAM_BAM_SORT_IDX(rawSAM)
   sortedBAM = SAM_BAM_SORT_IDX.out.bam_bai
 
+  // ============================================================================
+  // QUAST QUALITY ASSESSMENT PREPARATION
+  // ============================================================================
+  // Create empty file placeholder for samples without reference/alignment
   emptyFile = EMPTY_FILE()
 
-  refWithEmpty = faRefGenome.concat(emptyFile).map {[it[0].id, it]}
+  // Prepare reference genomes with empty file fallback
+  refWithEmpty = faRefGenome.concat(emptyFile).map { it ->[it[0].id, it]}
+  
+  // Prepare BAM files with empty file fallback
   bamWithEmpty = sortedBAM
-  | map {["${it[0].assembly_id}", it]}
-  | concat(emptyFile.map {[it[0].id, [it[0], it[1], it[1]]]})
+  | map { it ->["${it[0].assembly_id}", it]}
+  | concat(emptyFile.map { it ->[it[0].id, [it[0], it[1], it[1]]]})
 
+  // Complex channel operations to group assemblies, references, and BAMs for QUAST
   finalScaffolds
-  | map { [(it[0].ref_id ? it[0].ref_id : "empty_file"), it] }
+  | map { it -> [(it[0].ref_id ? it[0].ref_id : "empty_file"), it] }
   | combine(refWithEmpty, by:0)
-  | map {
+  | map { it ->
     if (it[1][0].realign == "yes") {
       return ["${it[1][0].assembly_id}", it[1], it[2]]
     } else {
@@ -267,9 +338,9 @@ workflow VIRAL_ASSEMBLY {
     }
   }
   | combine(bamWithEmpty, by:0)
-  | map {[it[1][0].id, it[1], it[2], it[3]]}
+  | map { it ->[it[1][0].id, it[1], it[2], it[3]]}
   | groupTuple()
-  | map {
+  | map { it ->
     def ids = []
     def assemblies = []
     def bams = []
@@ -282,16 +353,22 @@ workflow VIRAL_ASSEMBLY {
       bams << item[1]
       bais << item[2]
     }
-    meta = ["id": ids.join(","), label: it[0]]
+    def new_meta = ["id": ids.join(","), label: it[0]]
     return [
-      [meta, assemblies],
+      [new_meta, assemblies],
       it[2][0],
-      [meta, bams, bais]
+      [new_meta, bams, bais]
     ]
   }
   | set {inputForQuast}
 
-  QUAST(inputForQuast.map{it[0]},inputForQuast.map{it[1]},inputForQuast.map{it[2]})
+  // Run QUAST for assembly quality assessment
+  QUAST(inputForQuast.map{ it -> it[0]},inputForQuast.map{ it -> it[1]},inputForQuast.map{ it -> it[2]})
+
+  // ============================================================================
+  // VIRAL ASSEMBLY OUTPUTS
+  // ============================================================================
+  // Declare outputs
 
   emit:
   all_aln               = sortedBAM
