@@ -141,7 +141,7 @@ workflow VIRAL_ASSEMBLY {
 
   // Remove host/contaminant reads using iterative Kraken2 classification
   inputReadsUnclassified = ITERATIVE_UNCLASSIFIED_READS_EXTRACTION(inputForClassification, inputK2Index)
-
+  
   // ============================================================================
   // MERGE ANCHOR-MAPPED READS WITH UNCLASSIFIED READS
   // ============================================================================
@@ -295,18 +295,37 @@ workflow VIRAL_ASSEMBLY {
   | set { bwtIdx }
 
   // Combine reads with corresponding assembly indices for mapping
-  mergedForMapping.map { it ->[it[0].id, it]}
-  | combine(bwtIdx.map { it ->[it[0].id, it]}, by:0) // Merge by original sample ID
-  | map { it ->[[it[2][0], it[1][1]], it[2]]}
+  // Create mapping between original sample ID and reads
+  mergedForMapping
+  | map { it -> [it[0].id, it] }
+  | set { readsById }
+
+  // Create mapping between original sample ID and bowtie2 indices
+  bwtIdx
+  | map { it -> [it[0].id, it] }
+  | set { indicesById }
+
+  // Combine reads with their corresponding indices by original sample ID
+  readsById
+  | combine(indicesById, by: 0)
   | map { it ->
-      def new_meta = it[0][0].clone()
-      new_meta.label = "${new_meta.assembly_id}"
-      return [[new_meta, it[0][1]], it[1]]
+      def sample_id = it[0]
+      def reads_meta = it[1][0]
+      def reads_files = it[1][1]
+      def idx_meta = it[2][0]
+      def idx_files = it[2][1]
+      
+      // Create new metadata for mapping with assembly information
+      def new_meta = reads_meta.clone()
+      new_meta.assembly_id = idx_meta.assembly_id
+      new_meta.label = idx_meta.assembly_id
+      
+      return [[new_meta, reads_files], [idx_meta, idx_files]]
   }
-  | set {joinInputforBt2}
+  | set { joinInputforBt2 }
 
   // Map reads to assemblies and convert to sorted BAM
-  BT2(joinInputforBt2.map { it ->it[0]},joinInputforBt2.map { it ->it[1]})
+  BT2(joinInputforBt2.map { it -> it[0] }, joinInputforBt2.map { it -> it[1] })
 
   rawSAM = BT2.out
   SAM_BAM_SORT_IDX(rawSAM)
