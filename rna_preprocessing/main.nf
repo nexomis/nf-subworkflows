@@ -22,7 +22,7 @@ workflow RNA_PREPROCESSING {
     | set {multiqcYml}
 
     inputs
-    | map { [it[0].reference, it] }
+    | map { it ->  [it[0].reference, it] }
     | combine(reference.map({ [it[0].id, it] }), by:0)
     | map {
         def reads = it[1]
@@ -33,7 +33,7 @@ workflow RNA_PREPROCESSING {
 
     // Branch by method
     quantInput
-    | branch {
+    | branch { it -> 
         kallisto: it[1][0].method == 'kallisto'
         salmon: it[1][0].method == 'salmon'
     }
