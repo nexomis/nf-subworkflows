@@ -11,9 +11,9 @@
 
 // Process imports - organized by functionality
 include { FASTP_DEDUP } from '../../process/fastp/dedup/main.nf'
-include { BOWTIE2_BUILD as BT2_BUILD; BOWTIE2_BUILD as BT2_BUILD_ANCHOR } from '../../process/bowtie2/bowtie2-build/main.nf'
-include { BOWTIE2 as BT2; BOWTIE2 as BT2_ANCHOR } from '../../process/bowtie2/mapping/main.nf'
-include { SAM_BAM_SORT_IDX; SAM_BAM_SORT_IDX as SORT_ANCHOR} from '../../process/samtools/convert-sort-index/main.nf'
+include { BOWTIE2_BUILD as BT2_BUILD; BOWTIE2_BUILD as BT2_BUILD_ANCHOR; BOWTIE2_BUILD as BT2_BUILD_REF } from '../../process/bowtie2/bowtie2-build/main.nf'
+include { BOWTIE2 as BT2; BOWTIE2 as BT2_ANCHOR; BOWTIE2 as BT2_REF } from '../../process/bowtie2/mapping/main.nf'
+include { SAM_BAM_SORT_IDX; SAM_BAM_SORT_IDX as SORT_ANCHOR; SAM_BAM_SORT_IDX as SORT_REF} from '../../process/samtools/convert-sort-index/main.nf'
 include { EXTRACT_MAPPED_FASTQ } from '../../process/samtools/extract-mapped-fastq/main.nf'
 include { CONCAT_FQ } from '../../process/concat_fq/main.nf'
 include { QUAST } from '../../process/quast/main.nf'
@@ -100,6 +100,9 @@ workflow VIRAL_ASSEMBLY {
   // Build Bowtie2 index for anchor sequences (used for read selection)
   anchorsBt2Index = BT2_BUILD_ANCHOR(faAnchors)
 
+  // Build Bowtie2 index for reference genomes (used for reference mapping)
+  refBt2Index = BT2_BUILD_REF(faRefGenome)
+
   // ============================================================================
   // READ PROCESSING PRE-ANNOTATION
   // ============================================================================
@@ -177,9 +180,46 @@ workflow VIRAL_ASSEMBLY {
   }
   | set { notDedupReadsToKeep }
 
+  inputReadsAfterSelection.filter{ it -> 
+  (it[0].dedup == "no")
+  }
+  | set { notDedupReads }
+
   // Create separate channels for assembly (deduplicated) and mapping (original)
   mergedForAssembly = notDedupReadsToKeep.concat(dedupReads)
-  mergedForMapping = notDedupReadsToKeep.concat(readsForDedup) // Use original reads for mapping
+  mergedForMapping = notDedupReads.concat(readsForDedup) // Use original reads for mapping
+
+  // ============================================================================
+  // MAPPING TO THE REFERENCE
+  // ============================================================================
+  // Map reads to reference genome if ref_mapping is enabled and reference is available
+  mergedForMapping
+  | filter { it -> it[0].ref_id }
+  | map { it -> [it[0].ref_id, it] }
+  | combine(refBt2Index.map { it -> [it[0].id, it] }, by: 0)
+  | map { it ->
+      def ref_id = it[0]
+      def reads_meta = it[1][0]
+      def reads_files = it[1][1]
+      def idx_meta = it[2][0]
+      def idx_files = it[2][1]
+      
+      // Create new metadata for reference mapping
+      def new_meta = reads_meta.clone()
+      new_meta.label = "${new_meta.id}_ref_mapping"
+      
+      return [[new_meta, reads_files], [idx_meta, idx_files]]
+  }
+  | set { inputForRefMapping }
+
+  // Map reads to reference genome
+  BT2_REF(inputForRefMapping.map { it -> it[0] }, inputForRefMapping.map { it -> it[1] })
+
+  // Convert SAM to sorted and indexed BAM
+  SORT_REF(BT2_REF.out)
+  refMappedBAM = SORT_REF.out.bam_bai
+
+  mergedForMapping
 
   // ============================================================================
   // DE NOVO ASSEMBLY WITH SPADES
@@ -345,7 +385,12 @@ workflow VIRAL_ASSEMBLY {
   | map { it ->["${it[0].assembly_id}", it]}
   | concat(emptyFile.map { it ->[it[0].id, [it[0], it[1], it[1]]]})
 
-  // Complex channel operations to group assemblies, references, and BAMs for QUAST
+  // Prepare reference BAM files with empty file fallback
+  refBamWithEmpty = refMappedBAM
+  | map { it -> [it[0].id, [it[0], it[1], it[2]]] }
+  | concat(emptyFile.map { it -> [it[0].id, [it[0], it[1], it[1]]] })
+
+  // Complex channel operations to group assemblies, references, assembly BAMs, and reference BAMs for QUAST
   finalScaffolds
   | map { it -> [(it[0].ref_id ? it[0].ref_id : "empty_file"), it] }
   | combine(refWithEmpty, by:0)
@@ -357,32 +402,43 @@ workflow VIRAL_ASSEMBLY {
     }
   }
   | combine(bamWithEmpty, by:0)
-  | map { it ->[it[1][0].id, it[1], it[2], it[3]]}
+  | map { it ->
+    def sample_id = it[1][0].id
+    def ref_bam_key = it[1][0].ref_id ? sample_id : "empty_file"
+    return [ref_bam_key, it[1], it[2], it[3]]
+  }
+  | combine(refBamWithEmpty, by:0)
+  | map { it ->[it[1][0].id, it[1], it[2], it[3], it[4]]}
   | groupTuple()
   | map { it ->
     def ids = []
     def assemblies = []
-    def bams = []
-    def bais = []
+    def assembly_bams = []
+    def assembly_bais = []
+    def ref_bams = []
+    def ref_bais = []
     it[1].each{ item ->
       ids << item[0].assembly_id
       assemblies << item[1]
     }
     it[3].each{ item ->
-      bams << item[1]
-      bais << item[2]
+      assembly_bams << item[1]
+      assembly_bais << item[2]
     }
+    def ref_bam = it[4][0][1]
+    def ref_bai = it[4][0][2]
     def new_meta = ["id": ids.join(","), label: it[0]]
     return [
       [new_meta, assemblies],
       it[2][0],
-      [new_meta, bams, bais]
+      [new_meta, assembly_bams, assembly_bais],
+      [new_meta, ref_bam, ref_bai]
     ]
   }
   | set {inputForQuast}
 
   // Run QUAST for assembly quality assessment
-  QUAST(inputForQuast.map{ it -> it[0]},inputForQuast.map{ it -> it[1]},inputForQuast.map{ it -> it[2]})
+  QUAST(inputForQuast.map{ it -> it[0]},inputForQuast.map{ it -> it[1]},inputForQuast.map{ it -> it[2]},inputForQuast.map{ it -> it[3]})
 
   // ============================================================================
   // VIRAL ASSEMBLY OUTPUTS
@@ -391,6 +447,7 @@ workflow VIRAL_ASSEMBLY {
 
   emit:
   all_aln               = sortedBAM
+  ref_mapped_bam        = refMappedBAM
   cleaned_reads         = inputReadsAfterSelection
   anchored_reads        = EXTRACT_MAPPED_FASTQ.out.mapped
   unclassed_reads       = inputReadsUnclassified
