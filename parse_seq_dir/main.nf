@@ -25,7 +25,7 @@ workflow PARSE_SEQ_DIR {
 
   main:
 
-  inputDir.flatMap {
+  inputDir.flatMap { it -> 
     def dir = it[1]
     def meta = it[0]
     def depth = meta.depth ?: 0
@@ -65,7 +65,7 @@ workflow PARSE_SEQ_DIR {
         if (group.layout == "PE") {
           // For paired-end, return tuple with sample metadata and both files
           // Use original file objects to preserve S3 properties
-          def fileList = group.files.collect { it.file }
+          def fileList = group.files.collect { f -> f.file }
           results.add(tuple(
             ["id": group.sampleName, "read_type": group.layout],
             fileList
@@ -85,7 +85,7 @@ workflow PARSE_SEQ_DIR {
     
     return results
   }
-  | branch {
+  | branch { it -> 
     fastq: it[0].read_type == "PE" || it[0].read_type == "SE"
       return it
     sfq: it[1][0].name.toLowerCase().contains(".sfq")

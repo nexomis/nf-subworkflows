@@ -15,43 +15,43 @@ workflow ITERATIVE_UNCLASSIFIED_READS_EXTRACTION {
       "class_tool": ["String"]
   ]
 
-  inputReads.map { checkMeta(it, expectedMeta) }
-  inputK2Index.map { checkMeta(it) }
+  inputReads.map { it -> checkMeta(it, expectedMeta) }
+  inputK2Index.map { it -> checkMeta(it) }
 
-  inputReads.map { [it[0].class_db_ids.size() >= 1 ? it[0].class_db_ids[0] : "", it] }
-  | filter { it[0] != "" }
-  | combine(inputK2Index.map{[it[0].id, it]}, by:0)
+  inputReads.map { it -> [it[0].class_db_ids.size() >= 1 ? it[0].class_db_ids[0] : "", it] }
+  | filter { it -> it[0] != "" }
+  | combine(inputK2Index.map{ it -> [it[0].id, it]}, by:0)
   | set {joinInputForK2i1}
 
-  KRAKEN2_HOST1(joinInputForK2i1.map { it[1] }, joinInputForK2i1.map { it[2] })
+  KRAKEN2_HOST1(joinInputForK2i1.map { it -> it[1] }, joinInputForK2i1.map { it -> it[2] })
   KRAKEN2_HOST1.out.unclassified_reads_fastq
   | GZ1
   | concat(inputReads)
-  | unique { it[0].id }
+  | unique { it -> it[0].id }
   | set {inputReadsFromK1}
 
-  inputReadsFromK1.map { [it[0].class_db_ids.size() >= 2 ? it[0].class_db_ids[1] : "", it] }
-  | filter { it[0] != "" }
-  | combine(inputK2Index.map{[it[0].id, it]}, by:0)
+  inputReadsFromK1.map { it -> [it[0].class_db_ids.size() >= 2 ? it[0].class_db_ids[1] : "", it] }
+  | filter { it -> it[0] != "" }
+  | combine(inputK2Index.map{ it -> [it[0].id, it]}, by:0)
   | set {joinInputForK2i2}
 
-  KRAKEN2_HOST2(joinInputForK2i2.map { it[1] }, joinInputForK2i2.map { it[2] })
+  KRAKEN2_HOST2(joinInputForK2i2.map { it -> it[1] }, joinInputForK2i2.map { it -> it[2] })
   KRAKEN2_HOST2.out.unclassified_reads_fastq
   | GZ2
   | concat(inputReadsFromK1)
-  | unique { it[0].id }
+  | unique { it -> it[0].id }
   | set {inputReadsFromK2}
 
-  inputReadsFromK2.map { [it[0].class_db_ids.size() >= 3 ? it[0].class_db_ids[2] : "", it] }
-  | filter { it[0] != "" }
-  | combine(inputK2Index.map{[it[0].id, it]}, by:0)
+  inputReadsFromK2.map { it -> [it[0].class_db_ids.size() >= 3 ? it[0].class_db_ids[2] : "", it] }
+  | filter { it -> it[0] != "" }
+  | combine(inputK2Index.map{ it -> [it[0].id, it]}, by:0)
   | set {joinInputForK2i3}
 
-  KRAKEN2_HOST3(joinInputForK2i3.map { it[1] }, joinInputForK2i3.map { it[2] })
+  KRAKEN2_HOST3(joinInputForK2i3.map { it -> it[1] }, joinInputForK2i3.map { it -> it[2] })
   KRAKEN2_HOST3.out.unclassified_reads_fastq
   | GZ3
   | concat(inputReadsFromK2)
-  | unique { it[0].id }
+  | unique { it -> it[0].id }
   | set {inputReadsFromK3}
 
   emit:

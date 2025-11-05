@@ -9,10 +9,10 @@ workflow UNSPRING_READS {
   main:
 
   // Validate metadata
-  inputReads.map { checkMeta(it) }
+  inputReads.map { it -> checkMeta(it) }
 
   inputReads
-  | branch {
+  | branch { it -> 
     spring: it[0].read_type == "spring"
     fastq: true
   }
@@ -20,7 +20,7 @@ workflow UNSPRING_READS {
 
   reads.spring
   | SPRING_DECOMPRESS
-  | map{
+  | map{ it -> 
     if (it[1].size() == 1) {
         it[0].read_type = "SR"
     } else {

@@ -89,11 +89,11 @@ def parseFilename(filename, parsingArgs = [:]) {
  */
 def detectLayout(parsedFiles) {
   // Group files by sample name
-  def sampleGroups = parsedFiles.groupBy { it.sampleName }
+  def sampleGroups = parsedFiles.groupBy { it -> it.sampleName }
   
   def results = [:]
   sampleGroups.each { sampleName, files ->
-    def readNumbers = files.collect { it.readNumber }.unique().sort()
+    def readNumbers = files.collect { it -> it.readNumber }.unique().sort()
     if (readNumbers.size() == 2 && readNumbers == [1, 2]) {
       results[sampleName] = "PE"
     } else {
@@ -110,7 +110,7 @@ def detectLayout(parsedFiles) {
 def groupFilesBySample(parsedFiles, layouts) {
   def grouped = []
   
-  def sampleGroups = parsedFiles.groupBy { it.sampleName }
+  def sampleGroups = parsedFiles.groupBy { it -> it.sampleName }
   
   sampleGroups.each { sampleName, files ->
     def layout = layouts[sampleName]
@@ -118,7 +118,7 @@ def groupFilesBySample(parsedFiles, layouts) {
     
     if (layout == "PE") {
       // Sort files by read number for paired-end
-      def sortedFiles = files.sort { it.readNumber }
+      def sortedFiles = files.sort { it -> it.readNumber }
       grouped.add([
         layout: "PE",
         fileType: fileType,

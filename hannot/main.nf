@@ -84,28 +84,28 @@ workflow HANNOT {
     ]
 
     // Validate metadata
-    genomeFasta.map { checkMeta(it, expectedMeta) }
-    proteinFasta.map { checkMeta(it, expectedMeta2) }
+    genomeFasta.map { it -> checkMeta(it, expectedMeta) }
+    proteinFasta.map { it -> checkMeta(it, expectedMeta2) }
 
     RENAME_PROT(proteinFasta)
     | set {renamedProt}
 
-    genomeFasta.map{
+    genomeFasta.map{ it -> 
       [it[0].proteome_id, it]
     }
-    | combine(renamedProt.map{[it[0].id, it]}, by:0)
+    | combine(renamedProt.map{ it -> [it[0].id, it]}, by:0)
     | set {joinInputForMiniprot}
 
-    MINIPROT(joinInputForMiniprot.map{it[1]}, joinInputForMiniprot.map{it[2]})
+    MINIPROT(joinInputForMiniprot.map{ it -> it[1]}, joinInputForMiniprot.map{ it -> it[2]})
     | set {annotFile}
 
-    genomeFasta.map{
+    genomeFasta.map{ it -> 
       [it[0].id, it]
     }
-    | combine(annotFile.map{[it[0].id, it]}, by:0)
+    | combine(annotFile.map{ it -> [it[0].id, it]}, by:0)
     | set {joinPost}
 
-    POST_PROCESS(joinPost.map{it[1]}, joinPost.map{it[2]})
+    POST_PROCESS(joinPost.map{ it -> it[1]}, joinPost.map{ it -> it[2]})
     out_genome_file = POST_PROCESS.out.genome
     out_annot_file = POST_PROCESS.out.annot
 

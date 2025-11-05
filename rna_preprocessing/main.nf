@@ -14,17 +14,17 @@ workflow RNA_PREPROCESSING {
         "reference": ["String", "NullObject"]
     ]
 
-    inputs.map { checkMeta(it, expectedMeta) }
-    reference.map { checkMeta(it) }
+    inputs.map { it -> checkMeta(it, expectedMeta) }
+    reference.map { it -> checkMeta(it) }
 
 
-    Channel.fromPath(moduleDir + "/multiqc.yml")
+    channel.fromPath(moduleDir + "/multiqc.yml")
     | set {multiqcYml}
 
     inputs
     | map { it ->  [it[0].reference, it] }
-    | combine(reference.map({ [it[0].id, it] }), by:0)
-    | map {
+    | combine(reference.map({ it -> [it[0].id, it] }), by:0)
+    | map { it -> 
         def reads = it[1]
         def ref = it[2]
         return [reads, ref]
@@ -41,14 +41,14 @@ workflow RNA_PREPROCESSING {
 
     // Kallisto quantification
     KALLISTO_QUANT(
-        quantBranched.kallisto.map({ it[0] }), 
-        quantBranched.kallisto.map({ it[1] })
+        quantBranched.kallisto.map({ it -> it[0] }), 
+        quantBranched.kallisto.map({ it -> it[1] })
     )
 
     // Salmon quantification
     SALMON_QUANT(
-        quantBranched.salmon.map({ it[0] }), 
-        quantBranched.salmon.map({ it[1] })
+        quantBranched.salmon.map({ it -> it[0] }), 
+        quantBranched.salmon.map({ it -> it[1] })
     )
 
     // Prepare MultiQC inputs
@@ -60,8 +60,8 @@ workflow RNA_PREPROCESSING {
         | set { salmonLogs }
 
     ALIGN_MULTIQC(
-        kallistoLogs.map({ it[1] }).collect(), 
-        salmonLogs.map({ it[1] }).collect(), 
+        kallistoLogs.map({ it -> it[1] }).collect(), 
+        salmonLogs.map({ it -> it[1] }).collect(), 
         multiqcYml
     )
 

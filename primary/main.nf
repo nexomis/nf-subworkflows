@@ -50,14 +50,14 @@ workflow PRIMARY {
   main:
 
   inputReads
-  | branch {
+  | branch { it -> 
     sfq: it[0].read_type == "sfq"
     fastq: it[0].read_type != "sfq"
   }
   | set { inputs }
 
   SLIMFASTQ_DECOMPRESS(inputs.sfq)
-  | map {
+  | map {  it -> 
     if (it[1].size()==1) {
       it[0].read_type = "SR"
     } else {
@@ -82,21 +82,21 @@ workflow PRIMARY {
 
   FASTQC_TRIMMED(subTrimmedReads)
 
-  Channel.fromPath(moduleDir + "/multiqc.yml")
+  channel.fromPath(moduleDir + "/multiqc.yml")
   | set {multiqcYml}
 
   FASTQC_RAW.out.zip
-  | map {it[1]}
+  | map { it -> it[1]}
   | collect
   | set {fastqcRaw}
 
   FASTQC_TRIMMED.out.zip
-  | map {it[1]}
+  | map { it -> it[1]}
   | collect
   | set {fastqcTrimmed}
 
   CUTADAPT.out.report_json
-  | map {it[1]}
+  | map { it -> it[1]}
   | collect
   | set {cutadaptReports}
 
@@ -106,12 +106,12 @@ workflow PRIMARY {
   )
 
   KRAKEN2.out.report
-  | map {it[1]}
+  | map { it -> it[1]}
   | collect
   | set {kraken2Reports}
 
   KRAKEN2.out.output
-  | map {it[1]}
+  | map { it -> it[1]}
   | collect
   | set {kraken2Outputs}
 
