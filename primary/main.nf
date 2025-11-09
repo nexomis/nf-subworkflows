@@ -9,8 +9,8 @@ include { FASTQC as FASTQC_RAW; FASTQC as FASTQC_TRIMMED } from '../../process/f
 process PRIMARY_MULTIQC {
   container 'multiqc/multiqc:v1.28'
 
-  label 'cpu_x1'
-  label 'mem_8G'
+  cpus 1
+  memory 8.GB
 
   input:
   path raw_zips, stageAs: 'raw/*', arity: '1..*'

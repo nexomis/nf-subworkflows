@@ -76,8 +76,8 @@ workflow RNA_PREPROCESSING {
 process ALIGN_MULTIQC {
     container 'multiqc/multiqc:v1.27.1' // version above are bugged
 
-    label 'cpu_x1'
-    label 'mem_8G'
+    cpus 1
+    memory 8.GB
 
     input:
     path kallisto_logs, stageAs: 'kallisto_logs/*', arity: '0..*'

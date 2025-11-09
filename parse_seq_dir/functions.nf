@@ -17,7 +17,7 @@ def listFilesRecurse(_dir, _depth) {
             }
           }
         } else {
-          files << _file
+          files = files + [_file]
         }
     }
   }

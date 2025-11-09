@@ -4,8 +4,8 @@ include { checkMeta } from '../utils.nf'
 process RENAME_PROT {
   container "python:3.10"
 
-  label 'cpu_x1'
-  label 'mem_2G'
+  cpus 1
+  memory 2.GB
 
   input:
   tuple val(meta), path(prot_fasta, arity: 1, stageAs: "inputs/*")
@@ -50,8 +50,8 @@ process RENAME_PROT {
 process POST_PROCESS {
   container "quay.io/nexomis/pandas:2.1.4"
 
-  label 'cpu_x1'
-  label 'mem_2G'
+  cpus 1
+  memory 2.GB
 
   input:
   tuple val(meta_genome), path(genome_fasta, arity: 1, stageAs: "input/genome.fasta")
